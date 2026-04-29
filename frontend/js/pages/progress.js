@@ -1,4 +1,4 @@
-/* 学习进度页面 v2.1 — 五级掌握度 + 环形图 + 热力日历 */
+/* 学习进度页面 v2.2 — 数据专题 */
 
 import { api } from '../api.js';
 import { renderTopbar, showEmpty } from '../components.js';
@@ -17,16 +17,14 @@ export async function renderProgressPage() {
       <p>五级掌握度体系，追踪真实学习深度</p>
     </div>
 
-    <!-- 概况卡片 -->
     <div id="statsCards" class="metrics-grid">
-      <div class="metric-card skeleton"><div class="metric-value">—</div></div>
-      <div class="metric-card skeleton"><div class="metric-value">—</div></div>
-      <div class="metric-card skeleton"><div class="metric-value">—</div></div>
-      <div class="metric-card skeleton"><div class="metric-value">—</div></div>
+      <div class="metric-card"><div class="metric-value">—</div></div>
+      <div class="metric-card"><div class="metric-value">—</div></div>
+      <div class="metric-card"><div class="metric-value">—</div></div>
+      <div class="metric-card"><div class="metric-value">—</div></div>
     </div>
 
-    <!-- 环形图 + 热力日历 并排 -->
-    <div class="progress-charts-row" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:32px 0">
+    <div class="progress-charts-row">
       <div>
         <h3 class="section-title">掌握度分布</h3>
         <div id="ringChart" class="chart-container" style="height:320px"></div>
@@ -39,18 +37,15 @@ export async function renderProgressPage() {
 
     <div class="divider"></div>
 
-    <!-- 知识点掌握详情 -->
     <h3 class="section-title">知识点掌握详情</h3>
     <div id="kpList"></div>
 
     <div class="divider"></div>
 
-    <!-- 档案学习进度 -->
     <h3 class="section-title">档案学习进度</h3>
     <div id="docMasteryList"></div>
 
-    <!-- 薄弱知识点 -->
-    <h3 class="section-title mt-3">需加强的知识点</h3>
+    <h3 class="section-title mt-4">需加强的知识点</h3>
     <div id="weakList"></div>
   `;
 
@@ -126,7 +121,7 @@ function renderRingChart(d) {
         show: true,
         position: 'outside',
         formatter: '{b}\n{d}%',
-        fontSize: 12,
+        fontSize: 11,
         color: '#5C5650',
         fontWeight: 600
       },
@@ -148,7 +143,6 @@ function renderHeatmap(calData) {
   const dateMap = {};
   calendar.forEach(c => { dateMap[c.date] = c.count; });
 
-  // 构建 90 天序列
   const data = [];
   const now = new Date();
   const colors = ['#FCF9F4', '#F5E8D8', '#E8C9A0', '#D4A06A', '#B45428'];
@@ -207,13 +201,13 @@ function renderKnowledgePoints(d) {
     <div class="kp-item">
       <div class="kp-info">
         <span class="kp-name">${kp.topic}</span>
-        <span class="kp-source text-sm text-secondary">${kp.source_file || ''}</span>
+        <span class="kp-source text-xs text-secondary">${kp.source_file || ''}</span>
       </div>
       <span class="kp-level" style="color:${kp.level_color}">L${kp.level} ${kp.level_name}</span>
       <div class="kp-bar">
         <div class="kp-bar-fill" style="width:${kp.mastery_rate}%;background:${kp.level_color}"></div>
       </div>
-      <span class="kp-rate text-sm">${kp.mastery_rate}%</span>
+      <span class="kp-rate">${kp.mastery_rate}%</span>
     </div>
   `).join('');
 }
@@ -230,12 +224,12 @@ function renderDocMastery(d) {
   el.innerHTML = docs.map(doc => `
     <div class="expander">
       <div class="expander-header">
-        <span class="doc-mastery-name">《${doc.filename}》</span>
+        <span class="doc-mastery-name">${doc.filename}</span>
         <span class="kp-level" style="color:${doc.level_color}">L${doc.level} ${doc.level_name}</span>
         <span class="expander-arrow">+</span>
       </div>
       <div class="expander-body">
-        <div class="form-group" style="display:flex;gap:16px;flex-wrap:wrap">
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
           <span class="badge ${doc.best_score >= 80 ? 'badge-success' : doc.best_score >= 60 ? 'badge-warning' : 'badge-error'}">最佳 ${doc.best_score} 分</span>
           <span class="text-sm text-secondary">测评 ${doc.assess_count} 次</span>
           <span class="text-sm text-secondary">均分 ${doc.avg_score}</span>
@@ -263,9 +257,9 @@ function renderWeakPoints(d) {
         <li>
           <div>
             <strong>${p.topic || '未知'}</strong>
-            <span class="kp-level" style="color:${p.level_color};margin-left:8px">L${p.level} ${p.level_name}</span>
+            <span class="kp-level" style="color:${p.level_color};margin-left:10px">L${p.level} ${p.level_name}</span>
           </div>
-          <span class="text-sm text-secondary">正确率 ${p.mastery_rate}% · 来源《${p.source_file || '未知'}》</span>
+          <span class="text-sm text-secondary">正确率 ${p.mastery_rate}% · 来源：${p.source_file || '未知'}</span>
         </li>
       `).join('')}
     </ul>

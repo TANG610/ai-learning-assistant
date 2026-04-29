@@ -66,7 +66,7 @@ def create_app():
         multimodal_configured = bool(config.MULTIMODAL_API_KEY)
         return jsonify({
             "status": "healthy",
-            "version": "2.1.0",
+            "version": "2.2.0",
             "llm_configured": bool(config.LLM_API_KEY),
             "llm_model": config.LLM_MODEL,
             "multimodal_configured": multimodal_configured

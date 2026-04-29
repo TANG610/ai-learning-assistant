@@ -1,15 +1,16 @@
 /* ============================================================
-   MAGAZINE — Components
+   MAGAZINE — Components v2.2
+   Editorial quotes, understated forms, typographic components
    ============================================================ */
 
 /* ── Buttons ── */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 10px 24px;
-  font-size: 0.8rem; font-weight: 700; cursor: pointer;
+  padding: 10px 22px;
+  font-size: 0.78rem; font-weight: 700; cursor: pointer;
   border: none; transition: all var(--dur-fast);
   font-family: var(--font-body);
-  text-transform: uppercase; letter-spacing: 0.06em;
+  letter-spacing: 0.06em;
 }
 .btn:active { transform: scale(0.98); }
 
@@ -32,6 +33,7 @@
 .btn-danger {
   color: var(--error); background: transparent;
   border: 2px solid transparent;
+  font-size: 0.72rem;
 }
 .btn-danger:hover {
   background: var(--error); color: #fff;
@@ -44,22 +46,22 @@
 .btn-ghost:hover { color: var(--rust); }
 
 .btn-block { width: 100%; }
-.btn-sm { padding: 5px 12px; font-size: 0.7rem; }
+.btn-sm { padding: 5px 12px; font-size: 0.68rem; }
 .btn-lg { padding: 14px 32px; font-size: 0.9rem; }
 
 /* ── Form ── */
 .form-group { margin-bottom: 22px; }
 .form-label {
-  display: block; font-size: 0.7rem; font-weight: 700;
+  display: block; font-size: 0.68rem; font-weight: 700;
   color: var(--ink-muted); margin-bottom: 6px;
-  text-transform: uppercase; letter-spacing: 0.1em;
+  letter-spacing: 0.1em; text-transform: uppercase;
 }
 .form-input, .form-select, .form-textarea {
-  width: 100%; padding: 12px 16px;
+  width: 100%; padding: 11px 14px;
   background: var(--ivory);
   border: 2px solid var(--border);
   color: var(--ink);
-  font-size: 0.95rem; font-family: var(--font-body);
+  font-size: 0.9rem; font-family: var(--font-body);
   transition: border-color var(--dur-fast);
   outline: none; line-height: 1.6;
 }
@@ -75,81 +77,102 @@
   padding-right: 34px;
 }
 
-/* ── Cards — editorial, border-based ── */
+/* ── Cards — used sparingly, border-based ── */
 .card {
   background: var(--ivory);
   border: 1px solid var(--border);
-  padding: 28px;
+  padding: 32px;
 }
 .card-header {
   font-family: var(--font-display);
   font-size: 1.25rem; font-weight: 700;
-  margin-bottom: 18px; color: var(--ink);
+  margin-bottom: 20px; color: var(--ink);
   letter-spacing: -0.01em;
 }
 .card-accent {
   border-left: 4px solid var(--rust);
 }
-.card-body { color: var(--ink-soft); font-size: 0.9rem; line-height: 1.8; }
 
-/* ── Metrics — magazine stat layout ── */
+/* ── Metrics — horizontal stat ribbon ── */
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  border-top: 1px solid var(--border);
+  border-top: 2px solid var(--ink);
   border-bottom: 1px solid var(--border);
+  margin: 48px 0;
 }
 .metric-card {
-  padding: 32px 24px; text-align: left;
+  padding: 28px 20px; text-align: left;
   border-right: 1px solid var(--border);
-  transition: background var(--dur-fast);
 }
 .metric-card:last-child { border-right: none; }
-.metric-card:hover { background: var(--camel-dim); }
 .metric-card .metric-value {
   font-family: var(--font-display);
-  font-size: 3.5rem; font-weight: 700;
+  font-size: 3.2rem; font-weight: 700;
   color: var(--forest);
   line-height: 1;
   font-style: italic;
 }
 .metric-card .metric-label {
-  font-size: 0.7rem; color: var(--ink-muted);
+  font-size: 0.68rem; color: var(--ink-muted);
   margin-top: 8px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.1em;
+  letter-spacing: 0.1em; text-transform: uppercase;
 }
 
-/* ── Chat bubbles ── */
+/* ── Chat messages — editorial quotes, NOT bubbles ── */
 .chat-message {
-  padding: 16px 20px;
-  margin-bottom: 16px;
-  line-height: 1.75;
-  font-size: 0.95rem; max-width: 78%;
-  animation: msgEnter 0.3s var(--ease-out-expo) both;
+  margin-bottom: 28px;
+  line-height: 1.8;
+  font-size: 0.95rem;
+  max-width: 85%;
+  animation: msgEnter 0.35s var(--ease-out-expo) both;
+  position: relative;
 }
 @keyframes msgEnter {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(10px); }
 }
 .chat-user {
-  background: var(--forest);
-  color: var(--ivory); margin-left: auto;
+  padding: 0 0 0 20px;
+  border-left: 3px solid var(--rust);
+  margin-left: auto;
+  margin-right: 0;
 }
 .chat-assistant {
-  background: var(--ivory);
-  border: 1px solid var(--border);
+  padding: 0 0 0 20px;
+  border-left: 3px solid var(--forest);
+  background: transparent;
+  margin-left: 0;
+  margin-right: auto;
 }
 .chat-sources {
   margin-top: 10px; padding: 8px 14px;
   background: var(--ivory-deep);
-  font-size: 0.8rem; color: var(--ink-muted);
+  font-size: 0.75rem; color: var(--ink-muted);
   border-left: 3px solid var(--rust);
+  font-style: italic;
 }
 
-/* ── Badges ── */
+/* Typing indicator */
+.typing-dots {
+  display: flex; gap: 3px; padding: 4px 0;
+}
+.typing-dots span {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--forest);
+  animation: dotBreathe 1.2s infinite ease-in-out both;
+}
+.typing-dots span:nth-child(1) { animation-delay: -0.24s; }
+.typing-dots span:nth-child(2) { animation-delay: -0.12s; }
+@keyframes dotBreathe {
+  0%, 80%, 100% { transform: scale(0.5); opacity: 0.3; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* ── Badges — understated ── */
 .badge {
   display: inline-flex; align-items: center; gap: 3px;
   padding: 2px 10px;
-  font-size: 0.65rem; font-weight: 700;
+  font-size: 0.63rem; font-weight: 700;
   letter-spacing: 0.08em; text-transform: uppercase;
 }
 .badge-success { background: var(--success-dim); color: var(--success); }
@@ -157,51 +180,40 @@
 .badge-error { background: var(--error-dim); color: var(--error); }
 .badge-info { background: var(--info-dim); color: var(--info); }
 
-/* ── Progress bar ── */
-.progress-bar {
-  width: 100%; height: 4px;
-  background: var(--ivory-deep);
-  overflow: hidden;
-}
-.progress-fill {
-  height: 100%;
-  background: var(--rust);
-  transition: width 0.7s var(--ease-out-expo);
-}
-.progress-fill.success { background: var(--success); }
-
-/* ── Expander ── */
+/* ── Expander — editorial accordion ── */
 .expander {
   border-bottom: 1px solid var(--border);
   overflow: hidden;
-  background: var(--ivory);
+  background: transparent;
 }
 .expander-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 0; cursor: pointer;
-  font-size: 0.9rem; font-weight: 600;
+  padding: 18px 0; cursor: pointer;
+  font-size: 0.95rem; font-weight: 600;
+  color: var(--ink);
   transition: color var(--dur-fast);
 }
 .expander-header:hover { color: var(--rust); }
 .expander-body {
   max-height: 0; overflow: hidden;
-  transition: max-height 0.4s var(--ease-out), padding 0.4s var(--ease-out);
+  transition: max-height 0.5s var(--ease-out), padding 0.5s var(--ease-out);
   padding: 0;
 }
 .expander.open .expander-body {
-  max-height: 800px;
-  padding: 0 0 20px;
+  max-height: 1200px;
+  padding: 0 0 24px;
 }
 .expander-arrow {
-  font-size: 0.7rem; color: var(--ink-muted);
+  font-size: 0.8rem; color: var(--ink-muted);
   transition: transform 0.3s var(--ease-out);
+  font-family: var(--font-display);
 }
-.expander.open .expander-arrow { transform: rotate(90deg); }
+.expander.open .expander-arrow { transform: rotate(45deg); }
 
 /* ── Divider ── */
 .divider {
   border: none; border-top: 1px solid var(--border-heavy);
-  margin: 40px 0;
+  margin: 48px 0;
   width: 72px;
 }
 
@@ -209,8 +221,8 @@
 .toast {
   position: fixed; top: 20px; right: 20px;
   padding: 12px 20px;
-  font-size: 0.85rem; font-weight: 600; z-index: 9999;
-  animation: toastIn 0.35s var(--ease-out-expo) both;
+  font-size: 0.82rem; font-weight: 600; z-index: 9999;
+  animation: toastIn 0.4s var(--ease-out-expo) both;
   box-shadow: var(--shadow-md);
   display: flex; align-items: center; gap: 8px;
 }
@@ -222,7 +234,7 @@
 /* ── Modal ── */
 .modal-overlay {
   position: fixed; inset: 0;
-  background: rgba(30, 27, 24, 0.3);
+  background: rgba(30, 27, 24, 0.4);
   display: flex; align-items: center; justify-content: center;
   z-index: 999;
   animation: overlayIn 0.15s ease-out;
@@ -232,7 +244,7 @@
   background: var(--ivory);
   border: 1px solid var(--border-heavy);
   padding: 36px; max-width: 460px; width: 90%;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md);
   animation: modalIn 0.3s var(--ease-out-expo) both;
 }
 @keyframes modalIn { from { opacity: 0; transform: translateY(16px) scale(0.98); } }
@@ -241,29 +253,39 @@
   font-size: 1.5rem; font-weight: 700; margin-bottom: 18px;
 }
 
-/* ── Upload zone ── */
+/* ── Upload zone — understated ── */
 .upload-zone {
-  border: 2px dashed var(--border-heavy);
-  padding: 40px; text-align: center;
+  border: 1px dashed var(--border-heavy);
+  padding: 32px; text-align: center;
   background: var(--ivory);
   cursor: pointer;
   transition: border-color var(--dur), background var(--dur);
+  max-width: 480px;
 }
-.upload-zone:hover {
+.upload-zone:hover, .upload-zone.dragover {
   border-color: var(--rust); border-style: solid;
   background: var(--rust-dim);
 }
-.upload-zone.dragover {
-  border-color: var(--rust); border-style: solid;
-  background: var(--rust-dim);
-}
-.upload-zone .upload-icon { font-size: 28px; margin-bottom: 8px; opacity: 0.5; }
-.upload-zone p { font-size: 0.95rem; color: var(--ink-soft); }
+.upload-zone .upload-icon { font-size: 24px; margin-bottom: 6px; opacity: 0.4; }
+.upload-zone p { font-size: 0.88rem; color: var(--ink-soft); }
 
 /* ── Empty state ── */
 .empty-state {
   text-align: center; padding: 64px 20px;
   color: var(--ink-muted);
 }
-.empty-state .empty-icon { font-size: 32px; margin-bottom: 12px; opacity: 0.3; }
-.empty-state p { font-size: 0.95rem; }
+.empty-state .empty-icon { font-size: 28px; margin-bottom: 12px; opacity: 0.25; }
+.empty-state p { font-size: 0.9rem; }
+
+/* ── Progress bar ── */
+.progress-bar {
+  width: 100%; height: 3px;
+  background: var(--ivory-deep);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--rust);
+  transition: width 0.7s var(--ease-out-expo);
+}
+.progress-fill.success { background: var(--success); }

@@ -1,4 +1,4 @@
-/* 资料库页面 */
+/* 资料库页面 v2.2 — 档案索引 */
 
 import { api } from '../api.js';
 import { renderTopbar, showConfirm, showEmpty } from '../components.js';
@@ -16,7 +16,7 @@ export function renderLibraryPage() {
     <div id="uploadZone" class="upload-zone">
       <div class="upload-icon">+</div>
       <p>点击或拖拽文件上传</p>
-      <p class="text-sm text-secondary">支持 PDF、PPTX、DOCX、MD、TXT、JPG、PNG、WEBP、GIF</p>
+      <p class="text-xs text-secondary">支持 PDF、PPTX、DOCX、MD、TXT、JPG、PNG、WEBP、GIF</p>
       <input type="file" id="fileInput" hidden accept=".pdf,.pptx,.ppt,.docx,.doc,.md,.markdown,.txt,.jpg,.jpeg,.png,.webp,.bmp,.gif">
       <div id="uploadProgress" class="hidden mt-2">
         <span class="spinner"></span> <span id="uploadStatus" class="text-sm text-secondary">上传处理中...</span>
@@ -85,7 +85,7 @@ async function loadDocuments() {
           <div class="doc-progress-bar" data-doc-id="${d.id}">
             <div class="doc-progress-fill" style="width:15%"></div>
           </div>
-          <div class="doc-progress-label text-sm text-secondary">解析中...</div>
+          <div class="doc-progress-label text-xs text-secondary">解析中...</div>
         `;
       }
       return `
@@ -136,13 +136,12 @@ async function loadDocuments() {
     if (docList) docList.innerHTML = `<p class="text-error">加载失败: ${e.message}</p>`;
   }
 
-  // 轮询正在处理的文档进度
   const processingDocs = data.documents?.filter(d => d.status === 'processing') || [];
   processingDocs.forEach(d => pollDocProgress(d.id));
 }
 
 async function pollDocProgress(docId) {
-  const maxPolls = 120; // 最多轮询 3 分钟
+  const maxPolls = 120;
   let polls = 0;
   const interval = setInterval(async () => {
     polls++;
@@ -158,7 +157,7 @@ async function pollDocProgress(docId) {
       }
       if (progress.status === 'parsed' || progress.status === 'error' || polls >= maxPolls) {
         clearInterval(interval);
-        if (progress.status === 'parsed') loadDocuments(); // 刷新列表
+        if (progress.status === 'parsed') loadDocuments();
       }
     } catch (e) {
       clearInterval(interval);
@@ -196,7 +195,7 @@ async function viewDocument(docId) {
         </dl>
         ${data.chunks && data.chunks.length ? `
           <div class="doc-chunks-list">
-            <p class="text-sm text-secondary mb-2">内容片段（${data.chunks.length}）</p>
+            <p class="text-xs text-secondary mb-2">内容片段（${data.chunks.length}）</p>
             ${data.chunks.map((c, i) => `
               <div class="doc-chunk-item">
                 <div class="chunk-idx">片段 ${i + 1}</div>

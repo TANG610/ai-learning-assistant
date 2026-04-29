@@ -1,4 +1,4 @@
-/* 知识测评页面 */
+/* 知识测评页面 v2.2 — 试卷风格 */
 
 import { api } from '../api.js';
 import { renderTopbar, showEmpty } from '../components.js';
@@ -11,13 +11,12 @@ export function renderQuizPage() {
   content.innerHTML = `
     <div class="page-header">
       <h2>知识测评</h2>
-      <p>AI 自动基于文档内容出题，评测你对知识点的掌握程度</p>
+      <p>AI 自动基于文档内容出题，评测掌握程度</p>
     </div>
 
-    <div class="card card-accent" id="setupCard">
-      <div class="card-header">创建测评</div>
-      <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
-        <div class="form-group" style="min-width:240px">
+    <div id="setupCard">
+      <div class="quiz-setup">
+        <div class="form-group" style="min-width:220px">
           <label class="form-label">选择文档</label>
           <select id="quizDocSelect" class="form-select"><option value="">— 请选择已解析的文档 —</option></select>
         </div>
@@ -29,15 +28,13 @@ export function renderQuizPage() {
             <option value="12">12 题（全面）</option>
           </select>
         </div>
-        <div style="padding-bottom:20px">
-          <button id="startQuizBtn" class="btn btn-primary">开始测评</button>
-        </div>
+        <button id="startQuizBtn" class="btn btn-primary" style="align-self:flex-end">开始测评</button>
       </div>
     </div>
 
     <div id="quizArea" class="hidden"></div>
     <div id="quizResult" class="hidden"></div>
-    <div id="quizHistory" class="mt-3"></div>
+    <div id="quizHistory" class="mt-4"></div>
   `;
 
   loadDocSelect();
@@ -72,12 +69,11 @@ async function startQuiz() {
   btn.textContent = 'AI 出题中...';
   btn.disabled = true;
 
-  // 显示进度步骤条
   const setupCard = document.getElementById('setupCard');
   const steps = renderProgressSteps([
-    { key: 'analyzing', label: '正在分析文档结构' },
-    { key: 'generating', label: '正在生成题目' },
-    { key: 'extracting', label: '正在提取知识点' }
+    { key: 'analyzing', label: '分析文档结构' },
+    { key: 'generating', label: '生成题目' },
+    { key: 'extracting', label: '提取知识点' }
   ]);
   setupCard.appendChild(steps);
   updateStepStatus(steps, 'analyzing', 'active');
@@ -88,7 +84,7 @@ async function startQuiz() {
     updateStepStatus(steps, 'analyzing', 'done');
     updateStepStatus(steps, 'generating', 'done');
     updateStepStatus(steps, 'extracting', 'done');
-    await new Promise(r => setTimeout(r, 400)); // 短暂停顿让用户看到完成态
+    await new Promise(r => setTimeout(r, 400));
     steps.remove();
     setupCard.classList.add('hidden');
     renderQuizQuestions(data.assessment_id, data.questions);
@@ -110,13 +106,15 @@ function renderQuizQuestions(assessmentId, questions) {
       <div class="quiz-question" data-qid="${q.id}">
         <div class="q-header">
           <span class="badge ${q.question_type === 'choice' ? 'badge-info' : q.question_type === 'true_false' ? 'badge-warning' : 'badge-success'}">${q.question_type === 'choice' ? '选择题' : q.question_type === 'true_false' ? '判断题' : '简答题'}</span>
-          <span class="text-sm text-secondary">难度: ${q.difficulty === 'easy' ? '简单' : q.difficulty === 'hard' ? '较难' : '中等'}</span>
+          <span class="text-xs text-secondary">难度: ${q.difficulty === 'easy' ? '简单' : q.difficulty === 'hard' ? '较难' : '中等'}</span>
         </div>
-        <div class="q-text">${i + 1}. ${q.question_text}</div>
+        <div class="q-text"><span class="q-num">${i + 1}.</span>${q.question_text}</div>
         ${renderQuestionOptions(q)}
       </div>
     `).join('')}
-    <button id="submitQuizBtn" class="btn btn-primary btn-block">提交答案</button>
+    <div style="margin-top:32px">
+      <button id="submitQuizBtn" class="btn btn-primary btn-block">提交答案</button>
+    </div>
   `;
 
   area.querySelectorAll('.quiz-option').forEach(opt => {
@@ -163,19 +161,17 @@ async function submitQuiz(assessmentId) {
   const btn = document.getElementById('submitQuizBtn');
   btn.disabled = true;
 
-  // 替换按钮区域为进度步骤条
   const btnParent = btn.parentElement;
   btn.remove();
   const steps = renderProgressSteps([
-    { key: 'submitting', label: '正在提交答案' },
-    { key: 'judging', label: 'AI 正在评判中' },
-    { key: 'analyzing', label: '正在生成分析报告' }
+    { key: 'submitting', label: '提交答案' },
+    { key: 'judging', label: 'AI 评判中' },
+    { key: 'analyzing', label: '生成分析报告' }
   ]);
   btnParent.appendChild(steps);
   updateStepStatus(steps, 'submitting', 'active');
 
   try {
-    // 模拟阶段推进（轮询后端状态）
     updateStepStatus(steps, 'submitting', 'done');
     updateStepStatus(steps, 'judging', 'active');
 
@@ -196,35 +192,35 @@ async function submitQuiz(assessmentId) {
     resultDiv.innerHTML = `
       <div class="score-reveal">
         <div class="score-ring"><div class="score-number">${result.score}</div></div>
-        <p style="margin-top:16px;font-size:16px;color:var(--text-secondary)">
+        <p style="margin-top:20px;font-size:1rem;color:var(--ink-soft)">
           正确 <strong style="color:var(--success)">${result.correct_count}</strong> / ${result.total} 题
         </p>
       </div>
 
-      <div class="quiz-feedback-list mt-3">
+      <div class="quiz-feedback-list">
         <h3 class="section-title">答题详情</h3>
         ${results.map((r, i) => {
           const correct = r.is_correct;
-          const icon = correct ? '&#10003;' : '&#10007;';
+          const icon = correct ? '✓' : '✗';
           const color = correct ? 'var(--success)' : 'var(--error)';
           const scorePercent = Math.round((r.score || 0) * 100);
           return `
-            <div class="quiz-feedback-item" style="border-left:4px solid ${color}">
+            <div class="quiz-feedback-item" style="border-left-color:${color}">
               <div style="display:flex;justify-content:space-between;align-items:flex-start">
-                <span style="color:${color};font-weight:700;font-size:20px">${icon}</span>
+                <span class="feedback-icon" style="color:${color}">${icon}</span>
                 <span class="badge ${correct ? 'badge-success' : 'badge-error'}">${r.score === 1 ? '满分' : r.score > 0 ? scorePercent + '%' : '0分'}</span>
               </div>
-              <div class="q-text mt-1" style="font-size:15px">${i + 1}. ${r.question || ''}</div>
+              <div class="q-text" style="font-size:1rem;margin-top:8px">${i + 1}. ${r.question || ''}</div>
               ${r.user_answer ? `<p class="text-sm mt-1" style="color:var(--ink-soft)">你的答案：${r.user_answer}</p>` : ''}
-              ${!correct ? `<p class="text-sm mt-1" style="color:var(--success);font-weight:600">✓ 正确答案：${r.correct_answer || '见解析'}</p>` : ''}
-              <p class="text-sm mt-1" style="color:var(--text-secondary)">${r.feedback || ''}</p>
+              ${!correct ? `<p class="text-sm mt-1" style="color:var(--success);font-weight:600">正确答案：${r.correct_answer || '见解析'}</p>` : ''}
+              <p class="text-sm mt-1" style="color:var(--ink-soft);line-height:1.7">${r.feedback || ''}</p>
               ${r.knowledge_point ? `<span class="badge badge-info mt-1">${r.knowledge_point}</span>` : ''}
             </div>
           `;
         }).join('')}
       </div>
 
-      <div class="text-center mt-3">
+      <div class="text-center mt-4">
         <button id="retryQuizBtn" class="btn btn-secondary">重新测评</button>
       </div>
     `;
@@ -267,7 +263,6 @@ function renderProgressSteps(steps) {
 function updateStepStatus(container, key, status) {
   const step = container.querySelector(`[data-step="${key}"]`);
   if (!step) return;
-  // 先清除所有状态
   step.className = `progress-step ${status}`;
 }
 
@@ -277,12 +272,16 @@ async function loadHistory() {
     const el = document.getElementById('quizHistory');
     if (data && data.assessments && data.assessments.length) {
       el.innerHTML = `
-        <h3 class="section-title mt-3">测评历史</h3>
+        <h3 class="section-title">测评历史</h3>
         ${data.assessments.map(a => `
-          <div class="card" style="padding:16px;display:flex;align-items:center;gap:12px;margin-bottom:8px">
-            <span class="badge ${a.score >= 80 ? 'badge-success' : a.score >= 60 ? 'badge-warning' : 'badge-error'}">${a.score}分</span>
-            <span style="font-weight:500;color:var(--text-primary)">${a.filename || '未知文档'}</span>
-            <span class="text-sm text-secondary" style="margin-left:auto">${(a.completed_at || '').slice(0, 16)}</span>
+          <div class="expander">
+            <div class="expander-header">
+              <span style="display:flex;align-items:center;gap:12px">
+                <span class="badge ${a.score >= 80 ? 'badge-success' : a.score >= 60 ? 'badge-warning' : 'badge-error'}">${a.score}分</span>
+                <span>${a.filename || '未知文档'}</span>
+              </span>
+              <span class="text-xs text-secondary">${(a.completed_at || '').slice(0, 16)}</span>
+            </div>
           </div>
         `).join('')}
       `;

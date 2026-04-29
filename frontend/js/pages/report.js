@@ -1,4 +1,4 @@
-/* 学习报告页面 */
+/* 学习报告页面 v2.2 — 专题文章 */
 
 import { api } from '../api.js';
 import { renderTopbar, showEmpty } from '../components.js';
@@ -11,7 +11,7 @@ export function renderReportPage() {
   content.innerHTML = `
     <div class="page-header">
       <h2>学习报告</h2>
-      <p>AI 基于你的学习数据自动生成周分析报告</p>
+      <p>AI 基于你的学习数据自动生成周分析</p>
     </div>
 
     <div class="card card-accent">
@@ -103,12 +103,14 @@ async function loadHistory() {
       el.innerHTML = data.reports.map(r => `
         <div class="expander">
           <div class="expander-header">
-            <span style="font-weight:600">${(r.week_start || '').slice(0, 10)} ~ ${(r.week_end || '').slice(0, 10)}</span>
-            <span class="expander-arrow">▶</span>
+            <span style="font-weight:600;font-family:var(--font-display)">
+              ${(r.week_start || '').slice(0, 10)} — ${(r.week_end || '').slice(0, 10)}
+            </span>
+            <span class="expander-arrow">+</span>
           </div>
           <div class="expander-body">
             <p class="text-sm text-secondary">学习 ${r.total_study_time || 0} 分钟 · 提问 ${r.total_questions || 0} 次 · ${r.documents_studied || 0} 篇文档</p>
-            <div class="report-content mt-2" style="max-height:500px;overflow-y:auto">${renderMarkdown(r.content || '')}</div>
+            <div class="report-content mt-2" style="max-height:500px;overflow-y:auto;border:none;padding:0">${renderMarkdown(r.content || '')}</div>
             ${r.file_path ? `<div class="mt-2"><button class="btn btn-primary btn-sm download-history" data-id="${r.id}">下载报告 (Markdown)</button></div>` : ''}
           </div>
         </div>

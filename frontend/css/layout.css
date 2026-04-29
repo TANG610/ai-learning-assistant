@@ -1,5 +1,6 @@
 /* ============================================================
-   MAGAZINE — Layout
+   MAGAZINE — Layout v2.2
+   Asymmetric grids, editorial topbar, page transitions
    ============================================================ */
 
 .app-shell {
@@ -7,7 +8,7 @@
   height: 100vh; overflow: hidden;
 }
 
-/* ── Topbar — understated, editorial ── */
+/* ── Topbar — editorial masthead ── */
 .topbar {
   display: flex; align-items: center;
   padding: 0 var(--main-px);
@@ -15,29 +16,34 @@
   background: var(--ivory);
   border-bottom: 1px solid var(--border);
   z-index: 100;
+  gap: 32px;
 }
 .topbar-brand {
   font-family: var(--font-display);
-  font-size: 1.125rem; font-weight: 700;
+  font-size: 1.05rem; font-weight: 700;
   color: var(--ink);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
   cursor: pointer;
+  flex-shrink: 0;
 }
 .topbar-brand em { font-style: italic; color: var(--rust); }
-.topbar-nav { display: flex; margin: 0 auto; }
+.topbar-nav {
+  display: flex; gap: 6px;
+  margin-left: auto;
+}
 .topbar-tab {
-  padding: 4px 0; margin: 0 20px;
-  font-size: 0.8rem; font-weight: 600;
+  padding: 6px 14px; margin: 0;
+  font-size: 0.75rem; font-weight: 600;
   color: var(--ink-muted);
   cursor: pointer; border: none; background: none;
   font-family: var(--font-body);
-  text-transform: uppercase; letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   transition: color var(--dur-fast);
   position: relative;
 }
 .topbar-tab::after {
   content: '';
-  position: absolute; bottom: -2px; left: 0; right: 0;
+  position: absolute; bottom: -2px; left: 14px; right: 14px;
   height: 2px; background: var(--rust);
   transform: scaleX(0); transform-origin: left;
   transition: transform var(--dur) var(--ease-out);
@@ -48,20 +54,21 @@
 
 .topbar-user {
   display: flex; align-items: center; gap: 10px;
-  font-size: 0.8rem; color: var(--ink-soft);
+  font-size: 0.78rem; color: var(--ink-soft);
   white-space: nowrap;
+  margin-left: 16px;
 }
 .topbar-user .logout-btn {
   background: none; border: 1px solid var(--border);
   color: var(--ink-muted); padding: 3px 12px;
-  font-size: 0.7rem; font-weight: 600;
-  letter-spacing: 0.06em; text-transform: uppercase;
+  font-size: 0.68rem; font-weight: 600;
+  letter-spacing: 0.06em;
   cursor: pointer; font-family: var(--font-body);
   transition: all var(--dur-fast);
 }
 .topbar-user .logout-btn:hover { color: var(--rust); border-color: var(--rust); }
 
-/* ── Main content ── */
+/* ── Main content — each page controls its own grid ── */
 .main-content {
   flex: 1; overflow-y: auto;
   padding: var(--main-py) var(--main-px);
@@ -69,90 +76,133 @@
   width: 100%; margin: 0 auto;
   animation: pageEnter var(--dur-page) var(--ease-out-expo) both;
 }
-/* Chat page steals the full viewport — no padding, no scroll on main */
+/* Chat page steals the full viewport */
 .main-content.chat-active {
-  padding: 0 var(--main-px);
+  padding: 0;
+  max-width: none;
   overflow: hidden;
 }
 @keyframes pageEnter {
-  from { opacity: 0; transform: translateY(12px); }
+  from { opacity: 0; transform: translateY(16px); }
 }
 
-/* ── Page header — DRAMATIC ── */
+/* ── Page header — dramatic, left-aligned ── */
 .page-header {
-  margin-bottom: 48px;
+  margin-bottom: 56px;
   position: relative;
 }
 .page-header h2 {
   font-family: var(--font-display);
-  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-size: clamp(2.5rem, 5.5vw, 4.5rem);
   font-weight: 700;
   color: var(--ink);
-  line-height: 1.1;
-  letter-spacing: -0.01em;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
 }
 .page-header p {
   color: var(--ink-soft);
-  font-size: 1.05rem; margin-top: 12px;
-  max-width: 520px;
+  font-size: 1rem; margin-top: 14px;
+  max-width: 420px;
   line-height: 1.7;
   position: relative;
-  padding-left: 24px;
-  border-left: 3px solid var(--rust);
+  padding-left: 28px;
+  border-left: 4px solid var(--rust);
 }
 
 /* ── Section title ── */
 .section-title {
   font-family: var(--font-display);
   font-size: 1.5rem; font-weight: 700;
-  margin-bottom: 20px; color: var(--ink);
+  margin-bottom: 24px; color: var(--ink);
   letter-spacing: -0.01em;
   position: relative;
-}
-.section-title::after {
-  content: '';
-  display: block; width: 48px; height: 3px;
-  background: var(--rust);
-  margin-top: 10px;
+  padding-bottom: 14px;
+  border-bottom: 2px solid var(--border);
 }
 
-/* ── Auth ── */
+/* ── Auth shell — cover layout ── */
 .auth-shell {
-  display: flex; align-items: center; justify-content: center;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   min-height: 100vh;
   background: var(--ivory);
+  position: relative;
+  overflow: hidden;
+}
+.auth-hero {
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 80px 64px;
+  position: relative;
+  z-index: 1;
+}
+.auth-hero::after {
+  content: '';
+  position: absolute; top: -20%; right: -60%; width: 120%; height: 140%;
+  background: var(--rust);
+  clip-path: polygon(65% 0, 100% 0, 100% 100%, 35% 100%);
+  z-index: -1;
+  opacity: 0.06;
+}
+.auth-hero h1 {
+  font-family: var(--font-display);
+  font-size: clamp(3rem, 7vw, 5.5rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.auth-hero h1 em { font-style: italic; color: var(--rust); }
+.auth-hero .hero-sub {
+  color: var(--ink-muted);
+  font-size: 1rem;
+  margin-top: 16px;
+  letter-spacing: 0.12em; font-weight: 600;
+  text-transform: uppercase;
+}
+.auth-hero .hero-line {
+  width: 72px; height: 4px;
+  background: var(--rust);
+  margin: 32px 0;
+}
+.auth-hero .hero-tagline {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-style: italic;
+  color: var(--ink-soft);
+  max-width: 340px;
+  line-height: 1.6;
+}
+
+.auth-form-col {
+  display: flex; align-items: center; justify-content: center;
+  padding: 48px;
 }
 .auth-card {
-  width: 420px;
+  width: 100%; max-width: 380px;
   background: var(--ivory);
   border: 1px solid var(--border-heavy);
-  padding: 56px 48px;
+  padding: 48px 40px;
   position: relative;
   animation: cardEnter 0.5s var(--ease-out-expo) both;
 }
 .auth-card::before {
   content: '';
-  position: absolute; top: -1px; left: 24px; right: 24px;
+  position: absolute; top: -1px; left: 0; right: 0;
   height: 4px; background: var(--rust);
 }
 @keyframes cardEnter {
-  from { opacity: 0; transform: translateY(20px); }
+  from { opacity: 0; transform: translateY(24px); }
 }
-.auth-card h1 {
-  font-family: var(--font-display);
-  font-size: 2.5rem; font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-}
-.auth-card h1 em { font-style: italic; color: var(--rust); }
-.auth-card .subtitle {
+.auth-card .card-label {
+  font-size: 0.65rem; font-weight: 700;
   color: var(--ink-muted);
-  font-size: 0.9rem; margin-bottom: 40px; margin-top: 4px;
-  text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-bottom: 32px;
 }
 .auth-card .form-footer {
-  margin-top: 28px; text-align: center;
-  font-size: 0.85rem; color: var(--ink-muted);
+  margin-top: 32px; text-align: center;
+  font-size: 0.82rem; color: var(--ink-muted);
 }
 .auth-card .form-footer a {
   color: var(--rust); cursor: pointer; text-decoration: none;
@@ -168,7 +218,7 @@
   border-left: 3px solid var(--error);
   color: #8B1A1A;
   padding: 10px 14px;
-  margin-bottom: 20px; font-size: 0.85rem;
+  margin-bottom: 20px; font-size: 0.82rem;
   animation: shake 0.45s ease;
 }
 @keyframes shake {
@@ -184,13 +234,30 @@
   display: flex; align-items: center; justify-content: center;
   padding: 64px 20px; flex-direction: column; gap: 12px;
 }
-.loading-state .spinner { width: 22px; height: 22px; }
+.loading-state .spinner { width: 20px; height: 20px; }
 .loading-state p { color: var(--ink-muted); font-size: 0.85rem; }
 .spinner {
-  display: inline-block; width: 18px; height: 18px;
+  display: inline-block; width: 16px; height: 16px;
   border: 2px solid var(--border);
   border-top-color: var(--rust);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  :root { --main-px: 20px; --main-py: 36px; }
+  .main-content { padding: var(--main-py) var(--main-px); }
+  .topbar {
+    padding: 0 var(--main-px); flex-wrap: wrap;
+    height: auto; min-height: 48px; gap: 8px;
+  }
+  .topbar-nav { order: 3; width: 100%; overflow-x: auto; margin: 4px 0; gap: 0; }
+  .topbar-tab { margin: 0 8px; font-size: 0.7rem; padding: 4px 8px; }
+  .auth-shell { grid-template-columns: 1fr; }
+  .auth-hero { padding: 40px 24px; min-height: 40vh; }
+  .auth-hero::after { display: none; }
+  .auth-form-col { padding: 24px; }
+  .page-header h2 { font-size: clamp(1.8rem, 8vw, 3rem); }
+}

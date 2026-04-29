@@ -1,4 +1,4 @@
-/* 认证模块 - 登录/注册页面 */
+/* 认证模块 — 杂志封面布局 v2.2 */
 
 import { api } from './api.js';
 import { showToast } from './utils.js';
@@ -7,20 +7,29 @@ export function renderLoginPage() {
   const app = document.getElementById('app');
   app.innerHTML = `
     <div class="auth-shell">
-      <div class="auth-card">
-        <h1><em>AI</em> 学习助手</h1>
-        <p class="subtitle">产品PM专版 · 登录</p>
-        <div id="authError" class="error-banner hidden"></div>
-        <div class="form-group">
-          <label class="form-label">用户名或邮箱</label>
-          <input id="loginUsername" class="form-input" placeholder="请输入用户名" autocomplete="username">
+      <!-- Hero — 杂志封面左半 -->
+      <div class="auth-hero">
+        <h1><em>AI</em><br>学习助手</h1>
+        <div class="hero-line"></div>
+        <p class="hero-sub">产品PM专版</p>
+        <p class="hero-tagline">让每一份学习资料<br>都成为你的知识资产</p>
+      </div>
+      <!-- Form — 窄栏表单 -->
+      <div class="auth-form-col">
+        <div class="auth-card">
+          <div class="card-label">登录账户</div>
+          <div id="authError" class="error-banner hidden"></div>
+          <div class="form-group">
+            <label class="form-label">用户名或邮箱</label>
+            <input id="loginUsername" class="form-input" placeholder="请输入用户名" autocomplete="username">
+          </div>
+          <div class="form-group">
+            <label class="form-label">密码</label>
+            <input id="loginPassword" class="form-input" type="password" placeholder="请输入密码" autocomplete="current-password">
+          </div>
+          <button id="loginBtn" class="btn btn-primary btn-block">登 录</button>
+          <p class="form-footer">还没有账号？<a id="goRegister">立即注册</a></p>
         </div>
-        <div class="form-group">
-          <label class="form-label">密码</label>
-          <input id="loginPassword" class="form-input" type="password" placeholder="请输入密码" autocomplete="current-password">
-        </div>
-        <button id="loginBtn" class="btn btn-primary btn-block">登 录</button>
-        <p class="form-footer">还没有账号？<a id="goRegister">立即注册</a></p>
       </div>
     </div>
   `;
@@ -38,24 +47,31 @@ export function renderRegisterPage() {
   const app = document.getElementById('app');
   app.innerHTML = `
     <div class="auth-shell">
-      <div class="auth-card">
-        <h1><em>AI</em> 学习助手</h1>
-        <p class="subtitle">产品PM专版 · 注册</p>
-        <div id="authError" class="error-banner hidden"></div>
-        <div class="form-group">
-          <label class="form-label">用户名</label>
-          <input id="regUsername" class="form-input" placeholder="2-30 个字符">
+      <div class="auth-hero">
+        <h1><em>AI</em><br>学习助手</h1>
+        <div class="hero-line"></div>
+        <p class="hero-sub">产品PM专版</p>
+        <p class="hero-tagline">开始构建<br>你的知识体系</p>
+      </div>
+      <div class="auth-form-col">
+        <div class="auth-card">
+          <div class="card-label">创建账户</div>
+          <div id="authError" class="error-banner hidden"></div>
+          <div class="form-group">
+            <label class="form-label">用户名</label>
+            <input id="regUsername" class="form-input" placeholder="2-30 个字符">
+          </div>
+          <div class="form-group">
+            <label class="form-label">邮箱</label>
+            <input id="regEmail" class="form-input" type="email" placeholder="your@email.com">
+          </div>
+          <div class="form-group">
+            <label class="form-label">密码</label>
+            <input id="regPassword" class="form-input" type="password" placeholder="至少 6 个字符">
+          </div>
+          <button id="registerBtn" class="btn btn-primary btn-block">注 册</button>
+          <p class="form-footer">已有账号？<a id="goLogin">去登录</a></p>
         </div>
-        <div class="form-group">
-          <label class="form-label">邮箱</label>
-          <input id="regEmail" class="form-input" type="email" placeholder="your@email.com">
-        </div>
-        <div class="form-group">
-          <label class="form-label">密码</label>
-          <input id="regPassword" class="form-input" type="password" placeholder="至少 6 个字符">
-        </div>
-        <button id="registerBtn" class="btn btn-primary btn-block">注 册</button>
-        <p class="form-footer">已有账号？<a id="goLogin">去登录</a></p>
       </div>
     </div>
   `;

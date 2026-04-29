@@ -1,4 +1,4 @@
-/* 智能对话页面 */
+/* 智能对话页面 v2.2 — 访谈对开页 */
 
 import { api } from '../api.js';
 import { createEl, renderTopbar, showEmpty } from '../components.js';
@@ -12,23 +12,34 @@ export function renderChatPage() {
     <div class="chat-page">
       <div class="page-header">
         <h2>智能对话</h2>
-        <p>基于学习资料进行 RAG 增强问答</p>
       </div>
-      <div class="chat-toolbar">
-        <select id="docSelect" class="form-select">
-          <option value="">不关联文档 · 通用问答</option>
-        </select>
-        <select id="modelSelect" class="form-select">
-          <option value="">加载中...</option>
-        </select>
-        <button id="newChatBtn" class="btn btn-ghost btn-sm">新对话</button>
+
+      <!-- 左侧栏 — 上下文控制 -->
+      <div class="chat-sidebar">
+        <div>
+          <div class="sidebar-label">关联文档</div>
+          <select id="docSelect">
+            <option value="">通用问答</option>
+          </select>
+        </div>
+        <div>
+          <div class="sidebar-label">模型</div>
+          <select id="modelSelect">
+            <option value="">加载中...</option>
+          </select>
+        </div>
+        <button id="newChatBtn" class="btn btn-ghost">新对话</button>
       </div>
-      <div id="chatHistory" class="chat-history">
-        ${showEmpty('', '选择文档或直接提问开始对话')}
-      </div>
-      <div class="chat-input-area">
-        <textarea id="chatInput" placeholder="输入问题，Enter 发送，Shift+Enter 换行" rows="1"></textarea>
-        <button id="sendBtn" class="btn btn-primary">发送</button>
+
+      <!-- 主对话区 -->
+      <div class="chat-main">
+        <div id="chatHistory" class="chat-history">
+          ${showEmpty('', '选择文档或直接提问开始对话')}
+        </div>
+        <div class="chat-input-area">
+          <textarea id="chatInput" placeholder="输入问题，Enter 发送，Shift+Enter 换行" rows="1"></textarea>
+          <button id="sendBtn" class="btn btn-primary">发送</button>
+        </div>
       </div>
     </div>
   `;
@@ -116,7 +127,9 @@ export function renderChatPage() {
 
 function addMessage(role, content, isStreaming = false) {
   const chatHistory = document.getElementById('chatHistory');
-  const div = createEl('div', { className: `chat-message ${role === 'user' ? 'chat-user' : 'chat-assistant'}` });
+  const cls = role === 'user' ? 'chat-user' : 'chat-assistant';
+  const div = createEl('div', { className: `chat-message ${cls}` });
+
   if (isStreaming) {
     div.innerHTML = '<span class="msg-text" style="white-space:pre-wrap"></span><div class="typing-dots"><span></span><span></span><span></span></div>';
   } else {
@@ -148,7 +161,7 @@ async function loadModelOptions() {
     if (data && data.models) {
       const sel = document.getElementById('modelSelect');
       sel.innerHTML = data.models.map(m =>
-        `<option value="${m.id}" ${m.is_current ? 'selected' : ''}>${m.name}${m.type === 'multimodal' ? ' (多模态)' : ''}</option>`
+        `<option value="${m.id}" ${m.is_current ? 'selected' : ''}>${m.name}</option>`
       ).join('');
     }
   } catch (e) {
