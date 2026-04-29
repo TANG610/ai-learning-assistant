@@ -126,34 +126,49 @@ class DocumentService:
 
     @staticmethod
     def _parse_multimodal(file_path: str, progress_callback=None) -> tuple:
-        """
-        多模态文件解析：调用视觉模型理解图片/混合内容
-
-        当前实现：返回文件元信息作为占位文本
-        完整实现在 P1 #7 中接入 MiniMax 2.7 vision API 后激活
-        """
+        """多模态文件解析：调用视觉模型理解图片内容"""
         ext = Path(file_path).suffix.lower()
         if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"):
-            # 纯图片：尝试用视觉模型理解
-            # TODO P1 #7: 接入 MiniMax 2.7 vision API
             import base64
             try:
                 with open(file_path, "rb") as f:
                     img_data = base64.b64encode(f.read()).decode("utf-8")
-                # 占位：返回图片基本信息
+
                 file_size_kb = Path(file_path).stat().st_size / 1024
+                file_name = Path(file_path).name
+
+                # 尝试调用多模态视觉模型
+                parse_error = None
+                try:
+                    from services.claude_service import LLMService
+                    llm = LLMService()
+                    result = llm.chat_with_image(
+                        image_base64=img_data,
+                        question=f"请详细描述这张图片的内容。如果是图表，请描述其中的数据和趋势。如果是界面截图，请描述界面布局和功能。图片文件名: {file_name}"
+                    )
+                    if result and not result.startswith("错误") and not result.startswith("多模态分析失败"):
+                        text = (
+                            f"[图片分析] 文件名: {file_name}\n"
+                            f"文件大小: {file_size_kb:.1f} KB | 格式: {ext.upper()}\n"
+                            f"---\n视觉模型分析结果:\n{result}"
+                        )
+                        return text, ext.lstrip(".")
+                    else:
+                        parse_error = result
+                except Exception as e:
+                    parse_error = str(e)
+
+                # 多模态模型不可用时回退
+                reason = parse_error or "未配置多模态模型"
                 text = (
-                    f"[图片文件] 文件名: {Path(file_path).name}\n"
-                    f"文件大小: {file_size_kb:.1f} KB\n"
-                    f"格式: {ext.upper()}\n"
-                    f"说明: 此图片尚未经过视觉模型分析。请在设置中配置 MiniMax 2.7 API Key 后重新解析，"
-                    f"系统将自动调用视觉模型理解图片内容并生成结构化描述。"
+                    f"[图片文件] 文件名: {file_name}\n"
+                    f"文件大小: {file_size_kb:.1f} KB | 格式: {ext.upper()}\n"
+                    f"说明: 视觉模型暂时不可用（{reason}）。请在设置中确认多模态模型提供商配置正确后重新解析。"
                 )
                 return text, ext.lstrip(".")
             except Exception as e:
                 return f"[图片解析失败] {e}", ext.lstrip(".")
         else:
-            # 混合内容（如 PDF 中的图片）：先提取文本
             return parse_document(file_path)
 
     @staticmethod

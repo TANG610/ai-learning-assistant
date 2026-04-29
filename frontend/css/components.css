@@ -12,7 +12,9 @@
   font-family: var(--font-body);
   letter-spacing: 0.06em;
 }
-.btn:active { transform: scale(0.98); }
+.btn { transition: all var(--dur-fast) var(--ease-out); }
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: scale(0.97) translateY(0); }
 
 .btn-primary {
   background: var(--rust);
@@ -126,6 +128,7 @@
   font-size: 0.95rem;
   max-width: 85%;
   position: relative;
+  transition: padding 0.35s var(--ease-out);
 }
 /* Typographic variety: user vs assistant voice */
 .chat-user .msg-text {
@@ -152,13 +155,20 @@
   margin-right: 0;
   animation: msgEnterSpring 0.45s var(--ease-out-expo) both;
 }
+.chat-user:hover {
+  padding-left: 24px;
+}
 .chat-assistant {
-  padding: 0 0 0 20px;
+  padding: 12px 0 12px 20px;
   border-left: 3px solid var(--forest);
   background: transparent;
   margin-left: 0;
   margin-right: auto;
   animation: msgEnterSpring 0.45s var(--ease-out-expo) both;
+}
+.chat-assistant:hover {
+  padding-left: 24px;
+  border-left-color: var(--rust);
 }
 .chat-sources {
   margin-top: 10px; padding: 8px 14px;
@@ -166,6 +176,10 @@
   font-size: 0.75rem; color: var(--ink-muted);
   border-left: 3px solid var(--rust);
   font-style: italic;
+  animation: srcReveal 0.3s var(--ease-out-expo) both;
+}
+@keyframes srcReveal {
+  from { opacity: 0; transform: translateX(-6px); }
 }
 
 /* Typing indicator */
@@ -292,6 +306,52 @@
 }
 .empty-state .empty-icon { font-size: 28px; margin-bottom: 12px; opacity: 0.25; }
 .empty-state p { font-size: 0.9rem; }
+
+/* ── API Key config / Provider management ── */
+.providers-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.providers-header h3 { margin-bottom: 0; border-bottom: none; padding-bottom: 0; }
+.providers-list {
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+.provider-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center; gap: 16px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border);
+  animation: docEnter 0.35s var(--ease-out-expo) both;
+}
+.provider-info { min-width: 0; }
+.provider-name {
+  font-family: var(--font-display);
+  font-size: 1rem; font-weight: 600;
+  color: var(--ink);
+  font-style: italic;
+}
+.provider-detail {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 4px; flex-wrap: wrap;
+}
+.provider-status { margin-top: 2px; }
+.provider-actions {
+  display: flex; gap: 8px; flex-shrink: 0;
+}
+
+.api-key-input-row {
+  display: flex; gap: 8px; align-items: center;
+}
+.api-key-input-row .form-input { flex: 1; }
+.api-key-input-row .btn { flex-shrink: 0; padding: 6px 12px; font-size: 0.65rem; }
+
+.provider-modal { max-width: 420px; padding: 28px 32px; }
+.provider-modal .modal-title { font-size: 1.2rem; margin-bottom: 20px; }
+.provider-modal .form-group { margin-bottom: 14px; }
+.provider-modal .form-label { font-size: 0.62rem; margin-bottom: 4px; }
+.provider-modal .form-input, .provider-modal .form-select { padding: 8px 12px; font-size: 0.82rem; }
 
 /* ── Progress bar ── */
 .progress-bar {

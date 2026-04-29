@@ -11,6 +11,7 @@ sys.path.insert(0, str(project_root))
 
 from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
+import json as _json
 import config
 from models.database import init_db, run_migrations
 from backend.middleware.auth import require_auth
@@ -92,6 +93,111 @@ def create_app():
         if llm.set_model(model_id):
             return jsonify({"status": "switched", "model": model_id})
         return jsonify({"error": f"模型 {model_id} 不可用"}), 400
+
+    # ── API Key 配置（模型提供商管理）──
+    @app.route("/api/settings/providers", methods=["GET"])
+    @require_auth
+    def get_providers():
+        def mask_key(k):
+            if not k: return ""
+            return k[:6] + "****" + k[-4:] if len(k) > 10 else "****"
+        providers = config.MODEL_PROVIDERS if config.MODEL_PROVIDERS else []
+        # 如果 MODEL_PROVIDERS 为空，从旧式 env var 构建
+        if not providers:
+            if os.getenv("LLM_API_KEY"):
+                providers.append({
+                    "name": "DeepSeek V4 Flash",
+                    "base_url": os.getenv("LLM_BASE_URL", ""),
+                    "api_key": os.getenv("LLM_API_KEY", ""),
+                    "model": os.getenv("LLM_MODEL", ""),
+                    "type": "text"
+                })
+            if os.getenv("MULTIMODAL_API_KEY"):
+                providers.append({
+                    "name": "智谱 GLM-4.6V",
+                    "base_url": os.getenv("MULTIMODAL_BASE_URL", ""),
+                    "api_key": os.getenv("MULTIMODAL_API_KEY", ""),
+                    "model": os.getenv("MULTIMODAL_MODEL", ""),
+                    "type": "multimodal"
+                })
+        result = []
+        for p in providers:
+            result.append({
+                "name": p.get("name", ""),
+                "base_url": p.get("base_url", ""),
+                "api_key": p.get("api_key", ""),
+                "masked": mask_key(p.get("api_key", "")),
+                "model": p.get("model", ""),
+                "type": p.get("type", "text"),
+                "configured": bool(p.get("api_key", ""))
+            })
+        return jsonify({"providers": result})
+
+    @app.route("/api/settings/providers", methods=["POST"])
+    @require_auth
+    def update_providers():
+        data = request.get_json(silent=True) or {}
+        providers = data.get("providers", [])
+        env_file = config.BASE_DIR / ".env"
+        if not env_file.exists():
+            return jsonify({"error": ".env 文件不存在"}), 500
+
+        # 读取当前 .env
+        lines = env_file.read_text(encoding="utf-8").splitlines()
+
+        # 新的 MODEL_PROVIDERS JSON 行
+        new_providers_line = f"MODEL_PROVIDERS={_json.dumps(providers, ensure_ascii=False)}"
+
+        # 查找并替换 MODEL_PROVIDERS 行，或追加
+        found = False
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("MODEL_PROVIDERS="):
+                lines[i] = new_providers_line
+                found = True
+                break
+
+        # 同时更新旧式 env var 行以保持兼容
+        updates = {}
+        for p in providers:
+            ptype = p.get("type", "text")
+            if ptype == "text":
+                updates["LLM_API_KEY"] = p.get("api_key", "")
+                updates["LLM_BASE_URL"] = p.get("base_url", "")
+                updates["LLM_MODEL"] = p.get("model", "")
+            elif ptype == "multimodal":
+                updates["MULTIMODAL_API_KEY"] = p.get("api_key", "")
+                updates["MULTIMODAL_BASE_URL"] = p.get("base_url", "")
+                updates["MULTIMODAL_MODEL"] = p.get("model", "")
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key = stripped.split("=", 1)[0].strip()
+            if key in updates:
+                lines[i] = f"{key}={updates[key]}"
+                os.environ[key] = str(updates[key])
+
+        if not found:
+            # 在 AVAILABLE_MODELS 行之前插入
+            inserted = False
+            for i, line in enumerate(lines):
+                if line.strip().startswith("AVAILABLE_MODELS="):
+                    lines.insert(i, new_providers_line)
+                    inserted = True
+                    break
+            if not inserted:
+                lines.append(new_providers_line)
+
+        env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        # 更新运行时配置
+        config.MODEL_PROVIDERS = providers
+        config.LLM_API_KEY = updates.get("LLM_API_KEY", os.getenv("LLM_API_KEY", ""))
+        config.MULTIMODAL_API_KEY = updates.get("MULTIMODAL_API_KEY", os.getenv("MULTIMODAL_API_KEY", ""))
+
+        return jsonify({"status": "ok", "provider_count": len(providers)})
 
     # 错误处理
     @app.errorhandler(404)

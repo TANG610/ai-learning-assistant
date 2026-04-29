@@ -16,10 +16,20 @@
   margin: 0;
   padding: 10px 0 8px var(--main-px);
   border-bottom: 1px solid var(--border);
+  display: flex; align-items: baseline; gap: 12px;
 }
 .chat-page .page-header h2 {
-  font-size: 1rem;
-  letter-spacing: 0.04em;
+  font-size: 0.9rem;
+  letter-spacing: 0.06em;
+  font-style: italic;
+  position: relative;
+}
+.chat-page .page-header::after {
+  content: '';
+  flex: 1; height: 1px;
+  background: var(--rust);
+  opacity: 0.3;
+  margin-right: var(--main-px);
 }
 .chat-page .page-header p { display: none; }
 
@@ -31,6 +41,10 @@
   background: var(--ivory-deep);
   display: flex; flex-direction: column; gap: 20px;
   overflow-y: auto;
+  animation: sidebarSlideIn 0.5s 0.15s var(--ease-out-expo) both;
+}
+@keyframes sidebarSlideIn {
+  from { opacity: 0; transform: translateX(-20px); }
 }
 .chat-sidebar .sidebar-label {
   font-size: 0.62rem; font-weight: 700;
@@ -68,6 +82,18 @@
   padding: 24px var(--main-px);
   min-height: 0;
 }
+/* First assistant message gets an ornamental drop-cap quote */
+.chat-history .chat-assistant:first-of-type .msg-text::before {
+  content: '\201C';
+  display: block;
+  font-family: var(--font-display);
+  font-size: 3.5rem;
+  line-height: 0.8;
+  color: var(--rust);
+  opacity: 0.5;
+  margin-bottom: -4px;
+  font-style: italic;
+}
 .chat-input-area {
   flex-shrink: 0;
   display: flex; gap: 0;
@@ -81,7 +107,7 @@
 .chat-input-area textarea {
   flex: 1; min-height: 44px; max-height: 120px; resize: none;
   border: none !important; box-shadow: none !important;
-  background: transparent; padding: 8px 0;
+  background: transparent; padding: 12px 16px;
   font-size: 0.95rem; line-height: 1.6;
   font-family: var(--font-body);
   color: var(--ink);
@@ -114,7 +140,7 @@
 .doc-item:nth-child(4) { animation-delay: 0.16s; }
 .doc-item:nth-child(5) { animation-delay: 0.20s; }
 @keyframes docEnter { from { opacity: 0; transform: translateX(-8px); } }
-.doc-item:hover { padding-left: 12px; }
+.doc-item:hover { padding-left: 12px; background: var(--ivory); }
 .doc-item .doc-info { min-width: 0; }
 .doc-item .doc-name {
   font-family: var(--font-display);
@@ -244,7 +270,7 @@
   background: var(--ivory);
   font-family: var(--font-body);
 }
-.quiz-option:hover { border-left-color: var(--camel); background: var(--ivory-deep); }
+.quiz-option:hover { border-left-color: var(--camel); background: var(--ivory-deep); padding-left: 20px; }
 .quiz-option.selected {
   border-left-color: var(--rust); color: var(--rust); font-weight: 700;
   background: var(--rust-dim);
@@ -291,6 +317,10 @@
   background: var(--ivory);
   border: 1px solid var(--border);
   padding: 4px;
+  animation: chartReveal 0.7s 0.3s var(--ease-out-expo) both;
+}
+@keyframes chartReveal {
+  from { opacity: 0; transform: translateY(20px); }
 }
 
 .mini-bar {

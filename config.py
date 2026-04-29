@@ -28,10 +28,41 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 
-# ── LLM：MiniMax（全模态模型）──
+# ── LLM：多模态模型（视觉理解）──
 MULTIMODAL_API_KEY = os.getenv("MULTIMODAL_API_KEY", "")
-MULTIMODAL_BASE_URL = os.getenv("MULTIMODAL_BASE_URL", "https://api.minimax.chat/v1")
-MULTIMODAL_MODEL = os.getenv("MULTIMODAL_MODEL", "MiniMax-M2.7")
+MULTIMODAL_BASE_URL = os.getenv("MULTIMODAL_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+MULTIMODAL_MODEL = os.getenv("MULTIMODAL_MODEL", "glm-4.6v")
+
+# ── 模型提供商（JSON 数组）──
+# 格式: [{"name":"DeepSeek","base_url":"...","api_key":"sk-...","model":"deepseek-v4-flash","type":"text"}, ...]
+# 如果设置了此项，将从 JSON 中提取 LLM_API_KEY / MULTIMODAL_API_KEY 等兼容变量
+import json as _json
+_MODEL_PROVIDERS_RAW = os.getenv("MODEL_PROVIDERS", "")
+MODEL_PROVIDERS = []
+if _MODEL_PROVIDERS_RAW:
+    try:
+        MODEL_PROVIDERS = _json.loads(_MODEL_PROVIDERS_RAW)
+    except _json.JSONDecodeError:
+        MODEL_PROVIDERS = []
+
+# 从 MODEL_PROVIDERS 提取兼容变量（仅在未单独设置时覆盖）
+if MODEL_PROVIDERS:
+    for p in MODEL_PROVIDERS:
+        p_type = p.get("type", "text")
+        if p_type == "text" and not os.getenv("LLM_API_KEY"):
+            os.environ["LLM_API_KEY"] = p.get("api_key", "")
+            os.environ["LLM_BASE_URL"] = p.get("base_url", "")
+            os.environ["LLM_MODEL"] = p.get("model", "")
+            LLM_API_KEY = p.get("api_key", "")
+            LLM_BASE_URL = p.get("base_url", "")
+            LLM_MODEL = p.get("model", "")
+        elif p_type == "multimodal" and not os.getenv("MULTIMODAL_API_KEY"):
+            os.environ["MULTIMODAL_API_KEY"] = p.get("api_key", "")
+            os.environ["MULTIMODAL_BASE_URL"] = p.get("base_url", "")
+            os.environ["MULTIMODAL_MODEL"] = p.get("model", "")
+            MULTIMODAL_API_KEY = p.get("api_key", "")
+            MULTIMODAL_BASE_URL = p.get("base_url", "")
+            MULTIMODAL_MODEL = p.get("model", "")
 
 # ── 可用模型列表 ──
 AVAILABLE_MODELS = os.getenv("AVAILABLE_MODELS", LLM_MODEL).split(",")

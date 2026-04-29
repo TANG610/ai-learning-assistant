@@ -1,6 +1,6 @@
 """
 LLM 服务 - 多 Provider 架构
-支持 DeepSeek V4 Flash（文本）+ MiniMax 2.7（全模态）
+支持多 Provider 架构（文本 + 多模态视觉模型）
 """
 from openai import OpenAI
 import json
@@ -28,37 +28,59 @@ class LLMService:
     """多 Provider LLM 路由器，支持模型切换和 RAG"""
 
     def __init__(self):
-        # 主客户端（DeepSeek 文本模型）
         self._clients = {}
         self._models = {}
+        _first_text = None
+        _first_multimodal = None
 
-        if config.LLM_API_KEY:
-            self._clients["deepseek-v4-flash"] = OpenAI(
-                api_key=config.LLM_API_KEY,
-                base_url=config.LLM_BASE_URL,
-            )
-            self._models["deepseek-v4-flash"] = {
-                "id": "deepseek-v4-flash",
-                "name": "DeepSeek V4 Flash",
-                "type": "text",
-                "available": True,
-                "model": config.LLM_MODEL,
-                "max_tokens": config.LLM_MAX_TOKENS,
-            }
+        # 优先从 MODEL_PROVIDERS 构建，否则回退到旧式 env var
+        providers = config.MODEL_PROVIDERS if config.MODEL_PROVIDERS else []
+        if not providers:
+            # 回退：从旧式 env var 构建
+            if config.LLM_API_KEY:
+                providers.append({
+                    "name": "DeepSeek V4 Flash",
+                    "base_url": config.LLM_BASE_URL,
+                    "api_key": config.LLM_API_KEY,
+                    "model": config.LLM_MODEL,
+                    "type": "text"
+                })
+            if config.MULTIMODAL_API_KEY:
+                providers.append({
+                    "name": "智谱 GLM-4.6V",
+                    "base_url": config.MULTIMODAL_BASE_URL,
+                    "api_key": config.MULTIMODAL_API_KEY,
+                    "model": config.MULTIMODAL_MODEL,
+                    "type": "multimodal"
+                })
 
-        if config.MULTIMODAL_API_KEY:
-            self._clients["minimax-2.7"] = OpenAI(
-                api_key=config.MULTIMODAL_API_KEY,
-                base_url=config.MULTIMODAL_BASE_URL,
+        for p in providers:
+            pid = p.get("name", "").lower().replace(" ", "-")
+            if not pid:
+                continue
+            api_key = p.get("api_key", "")
+            if not api_key:
+                continue
+            self._clients[pid] = OpenAI(
+                api_key=api_key,
+                base_url=p.get("base_url", ""),
             )
-            self._models["minimax-2.7"] = {
-                "id": "minimax-2.7",
-                "name": "MiniMax 2.7",
-                "type": "multimodal",
+            ptype = p.get("type", "text")
+            self._models[pid] = {
+                "id": pid,
+                "name": p.get("name", pid),
+                "type": ptype,
                 "available": True,
-                "model": config.MULTIMODAL_MODEL,
-                "max_tokens": 4096,
+                "model": p.get("model", ""),
+                "max_tokens": config.LLM_MAX_TOKENS if ptype == "text" else 4096,
             }
+            if ptype == "text" and _first_text is None:
+                _first_text = pid
+            if ptype == "multimodal" and _first_multimodal is None:
+                _first_multimodal = pid
+
+        self._first_text = _first_text or "deepseek-v4-flash"
+        self._first_multimodal = _first_multimodal or "glm-4.6v"
 
         self.current_model = config.LLM_MODEL
         self.model = config.LLM_MODEL
@@ -120,7 +142,7 @@ class LLMService:
     def client(self):
         """返回当前模型对应的 OpenAI client（使用全局状态）"""
         model_id = get_current_model()
-        return self._clients.get(model_id, self._clients.get("deepseek-v4-flash"))
+        return self._clients.get(model_id) or next(iter(self._clients.values()), None)
 
     def get_available_models(self) -> list:
         """返回可用模型列表"""
@@ -261,7 +283,7 @@ class LLMService:
 
     def chat_with_image(self, image_base64: str, question: str, context: str = "") -> str:
         """
-        多模态对话 — 自动路由到 MiniMax 2.7
+        多模态对话 — 自动路由到多模态视觉模型
 
         Args:
             image_base64: Base64 编码的图片
@@ -271,12 +293,13 @@ class LLMService:
         Returns:
             模型回答文本
         """
-        # 自动切换到 MiniMax
-        if "minimax-2.7" not in self._clients:
-            return "错误：未配置 MiniMax API Key，无法使用多模态功能。请在设置中配置 MULTIMODAL_API_KEY。"
+        # 自动切换到多模态模型
+        multimodal_id = self._first_multimodal
+        if multimodal_id not in self._clients:
+            return "错误：未配置多模态模型，无法使用多模态功能。请在设置中添加多模态类型的模型提供商。"
 
         prev_model = self.current_model
-        self.set_model("minimax-2.7")
+        self.set_model(multimodal_id)
 
         try:
             content = [{"type": "text", "text": question or "请描述这张图片的内容"}]
