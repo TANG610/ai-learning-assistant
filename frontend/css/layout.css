@@ -83,7 +83,11 @@
   overflow: hidden;
 }
 @keyframes pageEnter {
-  from { opacity: 0; transform: translateY(16px); }
+  from { opacity: 0; transform: translateY(20px); }
+}
+/* Subtle scale-up for important cards */
+@keyframes cardRise {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
 }
 
 /* ── Page header — dramatic, left-aligned ── */
@@ -93,31 +97,34 @@
 }
 .page-header h2 {
   font-family: var(--font-display);
-  font-size: clamp(2.5rem, 5.5vw, 4.5rem);
+  font-size: clamp(1.8rem, 4vw, 3.2rem);
   font-weight: 700;
   color: var(--ink);
-  line-height: 1.05;
-  letter-spacing: -0.015em;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
 }
 .page-header p {
   color: var(--ink-soft);
-  font-size: 1rem; margin-top: 14px;
+  font-size: 0.9rem; margin-top: 12px;
   max-width: 420px;
-  line-height: 1.7;
+  line-height: 1.75;
   position: relative;
-  padding-left: 28px;
-  border-left: 4px solid var(--rust);
+  padding-left: 24px;
+  border-left: 3px solid var(--rust);
+  font-style: italic;
+  font-family: var(--font-display);
 }
 
 /* ── Section title ── */
 .section-title {
   font-family: var(--font-display);
-  font-size: 1.5rem; font-weight: 700;
+  font-size: 1.4rem; font-weight: 700;
   margin-bottom: 24px; color: var(--ink);
   letter-spacing: -0.01em;
   position: relative;
-  padding-bottom: 14px;
-  border-bottom: 2px solid var(--border);
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-heavy);
+  font-style: italic;
 }
 
 /* ── Auth shell — cover layout ── */

@@ -23,7 +23,8 @@ export function renderTopbar(activeTab) {
     { id: 'library', label: '资料库' },
     { id: 'quiz', label: '测评' },
     { id: 'progress', label: '进度' },
-    { id: 'report', label: '报告' }
+    { id: 'report', label: '报告' },
+    { id: 'settings', label: '设置' }
   ];
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
