@@ -23,6 +23,7 @@ from routes.chat_routes import chat_bp
 from routes.progress_routes import progress_bp
 from routes.quiz_routes import quiz_bp
 from routes.auth_routes import auth_bp
+from routes.news_routes import news_bp
 
 
 def create_app():
@@ -38,6 +39,7 @@ def create_app():
     app.register_blueprint(chat_bp)
     app.register_blueprint(progress_bp)
     app.register_blueprint(quiz_bp)
+    app.register_blueprint(news_bp)
 
     # 前端静态文件服务
     frontend_dir = project_root / "frontend"

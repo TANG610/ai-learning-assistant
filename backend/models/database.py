@@ -212,6 +212,43 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
 
+        -- 资讯文章表
+        CREATE TABLE IF NOT EXISTS news_articles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER,
+            title TEXT NOT NULL,
+            url TEXT NOT NULL UNIQUE,
+            source_name TEXT DEFAULT '',
+            source_type TEXT DEFAULT 'manual' CHECK(source_type IN ('manual','rss','digest')),
+            language TEXT DEFAULT 'zh' CHECK(language IN ('zh','en','unknown')),
+            summary TEXT DEFAULT '',
+            key_points TEXT DEFAULT '',
+            topics TEXT DEFAULT '',
+            is_read INTEGER DEFAULT 0,
+            is_bookmarked INTEGER DEFAULT 0,
+            published_at TEXT,
+            content TEXT DEFAULT '',
+            fetched_at TEXT DEFAULT (datetime('now','localtime')),
+            user_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE SET NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- RSS订阅源表
+        CREATE TABLE IF NOT EXISTS rss_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            language TEXT DEFAULT 'zh',
+            is_active INTEGER DEFAULT 1,
+            last_fetched_at TEXT,
+            article_count INTEGER DEFAULT 0,
+            user_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         -- 用户设置表
         CREATE TABLE IF NOT EXISTS user_settings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -231,6 +268,10 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_reports_date ON weekly_reports(week_start);
         CREATE INDEX IF NOT EXISTS idx_assessments_doc ON assessments(document_id);
         CREATE INDEX IF NOT EXISTS idx_aq_assessment ON assessment_questions(assessment_id);
+        CREATE INDEX IF NOT EXISTS idx_news_user ON news_articles(user_id);
+        CREATE INDEX IF NOT EXISTS idx_news_doc ON news_articles(document_id);
+        CREATE INDEX IF NOT EXISTS idx_news_url ON news_articles(url);
+        CREATE INDEX IF NOT EXISTS idx_rss_user ON rss_sources(user_id);
     """)
 
     conn.commit()
@@ -689,5 +730,214 @@ class AssessmentDAO:
             "UPDATE assessment_questions SET user_answer=?, is_correct=?, score=?, ai_feedback=? WHERE id=?",
             (user_answer, is_correct, score, ai_feedback, question_id)
         )
+        conn.commit()
+        conn.close()
+
+
+class NewsDAO:
+    """资讯文章数据操作"""
+
+    @staticmethod
+    def create(document_id, title, url, source_name='', source_type='manual',
+               summary='', key_points='', topics='', published_at=None,
+               language='zh', user_id=None, content=''):
+        conn = get_db()
+        cursor = conn.execute(
+            "INSERT INTO news_articles (document_id, title, url, source_name, source_type, "
+            "summary, key_points, topics, published_at, language, user_id, content) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (document_id, title, url, source_name, source_type,
+             summary, key_points, topics, published_at, language, user_id, content)
+        )
+        aid = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return aid
+
+    @staticmethod
+    def get_all(page=1, per_page=20, source_type=None, language=None,
+                is_read=None, is_bookmarked=None, user_id=None,
+                exclude_source_type=None):
+        conn = get_db()
+        where = ["n.user_id = ?"]
+        params = [user_id]
+        if source_type:
+            where.append("n.source_type = ?")
+            params.append(source_type)
+        if exclude_source_type:
+            where.append("n.source_type != ?")
+            params.append(exclude_source_type)
+        if language:
+            where.append("n.language = ?")
+            params.append(language)
+        if is_read is not None:
+            where.append("n.is_read = ?")
+            params.append(is_read)
+        if is_bookmarked is not None:
+            where.append("n.is_bookmarked = ?")
+            params.append(is_bookmarked)
+        clause = " AND ".join(where)
+        offset = (page - 1) * per_page
+        rows = conn.execute(
+            f"SELECT n.*, d.filename, d.status "
+            f"FROM news_articles n LEFT JOIN documents d ON n.document_id = d.id "
+            f"WHERE {clause} ORDER BY n.created_at DESC LIMIT ? OFFSET ?",
+            params + [per_page, offset]
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def get_by_id(article_id):
+        conn = get_db()
+        row = conn.execute(
+            "SELECT n.*, d.filename, d.status "
+            "FROM news_articles n LEFT JOIN documents d ON n.document_id = d.id "
+            "WHERE n.id = ?", (article_id,)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    @staticmethod
+    def get_by_url(url, user_id=None):
+        conn = get_db()
+        row = conn.execute(
+            "SELECT * FROM news_articles WHERE url = ? AND user_id = ?",
+            (url, user_id)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    @staticmethod
+    def mark_read(article_id, is_read=1):
+        conn = get_db()
+        conn.execute("UPDATE news_articles SET is_read = ? WHERE id = ?", (is_read, article_id))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def toggle_bookmark(article_id):
+        conn = get_db()
+        conn.execute(
+            "UPDATE news_articles SET is_bookmarked = CASE WHEN is_bookmarked = 0 THEN 1 ELSE 0 END WHERE id = ?",
+            (article_id,)
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def delete(article_id):
+        conn = get_db()
+        conn.execute("DELETE FROM news_articles WHERE id = ?", (article_id,))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_stats(user_id=None):
+        conn = get_db()
+        # 排除 RSS 原文，只统计用户可见的文章
+        total = conn.execute(
+            "SELECT COUNT(*) FROM news_articles WHERE user_id = ? AND source_type != 'rss'", (user_id,)
+        ).fetchone()[0]
+        unread = conn.execute(
+            "SELECT COUNT(*) FROM news_articles WHERE user_id = ? AND is_read = 0 AND source_type != 'rss'", (user_id,)
+        ).fetchone()[0]
+        bookmarked = conn.execute(
+            "SELECT COUNT(*) FROM news_articles WHERE user_id = ? AND is_bookmarked = 1 AND source_type != 'rss'", (user_id,)
+        ).fetchone()[0]
+        by_source = conn.execute(
+            "SELECT source_type, COUNT(*) as cnt FROM news_articles "
+            "WHERE user_id = ? AND source_type != 'rss' GROUP BY source_type", (user_id,)
+        ).fetchall()
+        by_language = conn.execute(
+            "SELECT language, COUNT(*) as cnt FROM news_articles "
+            "WHERE user_id = ? AND source_type != 'rss' GROUP BY language", (user_id,)
+        ).fetchall()
+        conn.close()
+        return {
+            "total": total,
+            "unread": unread,
+            "bookmarked": bookmarked,
+            "by_source": {r["source_type"]: r["cnt"] for r in by_source},
+            "by_language": {r["language"]: r["cnt"] for r in by_language}
+        }
+
+    @staticmethod
+    def get_recent(days=7, limit=100, user_id=None):
+        """获取最近N天的文章，用于生成摘要/趋势"""
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT * FROM news_articles WHERE user_id = ? "
+            "AND created_at >= datetime('now', 'localtime', ?) "
+            "ORDER BY created_at DESC LIMIT ?",
+            (user_id, f'-{days} days', limit)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+
+class RssSourceDAO:
+    """RSS订阅源数据操作"""
+
+    @staticmethod
+    def create(name, url, language='zh', user_id=None):
+        conn = get_db()
+        cursor = conn.execute(
+            "INSERT INTO rss_sources (name, url, language, user_id) VALUES (?, ?, ?, ?)",
+            (name, url, language, user_id)
+        )
+        sid = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return sid
+
+    @staticmethod
+    def get_all(user_id=None):
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT * FROM rss_sources WHERE user_id = ? ORDER BY created_at",
+            (user_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def get_by_id(source_id):
+        conn = get_db()
+        row = conn.execute("SELECT * FROM rss_sources WHERE id = ?", (source_id,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    @staticmethod
+    def get_active(user_id=None):
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT * FROM rss_sources WHERE is_active = 1 AND user_id = ?", (user_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def update(source_id, **kwargs):
+        conn = get_db()
+        allowed = {'name', 'url', 'language', 'is_active', 'last_fetched_at', 'article_count'}
+        sets = []
+        params = []
+        for k, v in kwargs.items():
+            if k in allowed:
+                sets.append(f"{k} = ?")
+                params.append(v)
+        if not sets:
+            conn.close()
+            return
+        params.append(source_id)
+        conn.execute(f"UPDATE rss_sources SET {', '.join(sets)} WHERE id = ?", params)
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def delete(source_id):
+        conn = get_db()
+        conn.execute("DELETE FROM rss_sources WHERE id = ?", (source_id,))
         conn.commit()
         conn.close()

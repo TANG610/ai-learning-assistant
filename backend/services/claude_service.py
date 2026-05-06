@@ -281,6 +281,33 @@ class LLMService:
             source_chunks=context_chunks, user_id=user_id
         )
 
+    def stream_generate(self, system_prompt: str, user_message: str, max_tokens: int = None):
+        """
+        通用流式生成 — 不绑定对话/不写DB，纯 generator
+        用于资讯综合报告等非对话场景的流式输出
+        """
+        import httpx
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ]
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self._resolve_model(),
+                max_tokens=max_tokens or self.max_tokens,
+                messages=messages,
+                stream=True
+            )
+            for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        except (httpx.ConnectError, httpx.ReadTimeout, ConnectionError, OSError) as e:
+            yield f"网络连接失败: {e}"
+        except Exception as e:
+            yield f"错误: {str(e)}"
+
     def chat_with_image(self, image_base64: str, question: str, context: str = "") -> str:
         """
         多模态对话 — 自动路由到多模态视觉模型

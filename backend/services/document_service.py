@@ -40,6 +40,40 @@ class DocumentService:
         return str(dest_path), suffix.lstrip("."), file_size
 
     @staticmethod
+    def import_text(title: str, content: str, user_id: int = None,
+                    file_category: str = 'news') -> dict:
+        """
+        直接导入文本内容作为文档（无需文件上传），复用现有解析管道。
+
+        Args:
+            title: 文档标题
+            content: 文本内容
+            user_id: 用户ID
+            file_category: 文档分类，默认 'news'
+
+        Returns:
+            {"doc_id": int, "chunks": int, "status": str}
+        """
+        import uuid
+        tmp_dir = config.UPLOAD_DIR / "tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_path = tmp_dir / f"import_{uuid.uuid4().hex[:8]}.txt"
+        tmp_path.write_text(content, encoding="utf-8")
+        try:
+            doc_id = DocumentDAO.create(
+                title, "txt", str(tmp_path), len(content.encode("utf-8")),
+                user_id=user_id, file_category=file_category
+            )
+            result = DocumentService.process_document(doc_id)
+            result["doc_id"] = doc_id
+            return result
+        finally:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+
+    @staticmethod
     def process_document(doc_id: int, progress_callback=None) -> dict:
         """
         处理文档：解析 → 分块 → 向量化 → 入库

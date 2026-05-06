@@ -48,7 +48,13 @@ def create_assessment():
         future_kp = pool.submit(llm.extract_knowledge_points, doc_content)
 
         # 等出题结果
-        result = future_questions.result()
+        # result = future_questions.result()
+        try:
+            result = future_questions.result()
+            print(f"[DEBUG] LLM result: {result}")  # 调试输出
+        except Exception as e:
+            print(f"[ERROR] LLM 调用失败: {e}")
+            return jsonify({"error": f"LLM调用失败: {e}"}), 500
         if "error" in result:
             return jsonify({"error": f"出题失败: {result['error']}"}), 500
 

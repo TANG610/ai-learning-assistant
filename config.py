@@ -116,3 +116,4 @@ for d in [UPLOAD_DIR, VECTOR_DB_DIR, REPORT_DIR, DATA_DIR]:
 
 # 每周报告生成时间（周几，0=周一）
 REPORT_WEEKDAY = int(os.getenv("REPORT_WEEKDAY", "0"))
+NEWS_FETCH_TIMEOUT = int(os.getenv("NEWS_FETCH_TIMEOUT", "15"))

@@ -6,6 +6,7 @@ import { renderLoginPage, renderRegisterPage } from './auth.js';
 // 页面模块映射
 const pages = {
   chat: () => import('./pages/chat.js').then(m => m.renderChatPage()),
+  news: () => import('./pages/news.js').then(m => m.renderNewsPage()),
   library: () => import('./pages/library.js').then(m => m.renderLibraryPage()),
   progress: () => import('./pages/progress.js').then(m => m.renderProgressPage()),
   report: () => import('./pages/report.js').then(m => m.renderReportPage()),

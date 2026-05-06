@@ -20,6 +20,7 @@ export function createEl(tag, attrs = {}, children = []) {
 export function renderTopbar(activeTab) {
   const tabs = [
     { id: 'chat', label: '对话' },
+    { id: 'news', label: '资讯' },
     { id: 'library', label: '资料库' },
     { id: 'quiz', label: '测评' },
     { id: 'progress', label: '进度' },

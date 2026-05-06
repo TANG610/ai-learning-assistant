@@ -24,9 +24,7 @@ export function renderChatPage() {
         </div>
         <div>
           <div class="sidebar-label">模型</div>
-          <select id="modelSelect">
-            <option value="">加载中...</option>
-          </select>
+          <div id="modelDisplay" class="sidebar-value">加载中...</div>
         </div>
         <button id="newChatBtn" class="btn btn-ghost">新对话</button>
       </div>
@@ -50,20 +48,7 @@ export function renderChatPage() {
   const chatInput = document.getElementById('chatInput');
 
   loadDocOptions();
-  loadModelOptions();
-
-  document.getElementById('modelSelect').addEventListener('change', async () => {
-    const model = document.getElementById('modelSelect').value;
-    if (!model) return;
-    try {
-      const res = await api.post('/models/switch', { model });
-      if (res.status === 'switched') {
-        showToast(`已切换至 ${model}`, 'info');
-      }
-    } catch (e) {
-      showToast('模型切换失败', 'error');
-    }
-  });
+  loadModelDisplay();
 
   document.getElementById('newChatBtn').addEventListener('click', () => {
     convId = null;
@@ -155,17 +140,15 @@ async function loadDocOptions() {
   } catch (e) { /* ignore */ }
 }
 
-async function loadModelOptions() {
+async function loadModelDisplay() {
   try {
     const data = await api.get('/models');
-    if (data && data.models) {
-      const sel = document.getElementById('modelSelect');
-      sel.innerHTML = data.models.map(m =>
-        `<option value="${m.id}" ${m.is_current ? 'selected' : ''}>${m.name}</option>`
-      ).join('');
+    const el = document.getElementById('modelDisplay');
+    if (data && data.current && el) {
+      el.textContent = data.current;
     }
   } catch (e) {
-    const sel = document.getElementById('modelSelect');
-    if (sel) sel.innerHTML = '<option value="">DeepSeek V4 Flash</option>';
+    const el = document.getElementById('modelDisplay');
+    if (el) el.textContent = 'DeepSeek V4 Flash';
   }
 }
