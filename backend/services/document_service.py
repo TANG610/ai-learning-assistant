@@ -230,6 +230,10 @@ class DocumentService:
 
     @staticmethod
     def search_documents(query: str, doc_id: int = None, top_k: int = 5, user_id: int = None) -> list:
-        """语义搜索文档内容"""
+        """语义搜索文档内容
+
+        Returns:
+            [{"text": str, "score": float, "doc_id": int, "chunk_index": int}, ...]
+        """
         vector_store = VectorStore()
         return vector_store.search(query, doc_id, top_k, user_id=user_id)

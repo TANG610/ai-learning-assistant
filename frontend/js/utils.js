@@ -38,6 +38,20 @@ export function showToast(message, type = 'info') {
 
 export function renderMarkdown(text) {
   if (!text) return '';
+  if (typeof marked !== 'undefined') {
+    try {
+      marked.setOptions({
+        breaks: true,
+        gfm: true,
+        headerIds: false,
+        mangle: false
+      });
+      return marked.parse(text);
+    } catch (e) {
+      // fallback below
+    }
+  }
+  // Fallback: basic manual rendering
   return text
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/^### (.+)$/gm, '<h3>$1</h3>')

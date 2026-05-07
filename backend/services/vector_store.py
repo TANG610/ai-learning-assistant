@@ -90,9 +90,12 @@ class VectorStore:
 
         return ids
 
-    def search(self, query: str, doc_id: int = None, top_k: int = 5, user_id: int = None) -> List[Tuple[str, float]]:
+    def search(self, query: str, doc_id: int = None, top_k: int = 5, user_id: int = None) -> List[dict]:
         """
         语义搜索最相关的文本片段
+
+        Returns:
+            [{"text": str, "score": float, "doc_id": int, "chunk_index": int}, ...]
         """
         embedding_fn = self._get_embedding_function()
         query_embedding = embedding_fn([query]).tolist()
@@ -105,7 +108,8 @@ class VectorStore:
                 return []
             results = collection.query(
                 query_embeddings=query_embedding,
-                n_results=top_k
+                n_results=top_k,
+                include=["documents", "distances", "metadatas"]
             )
         else:
             # 跨该用户所有 collection 搜索
@@ -114,7 +118,8 @@ class VectorStore:
             all_results = []
             for coll in all_collections:
                 try:
-                    result = coll.query(query_embeddings=query_embedding, n_results=top_k)
+                    result = coll.query(query_embeddings=query_embedding, n_results=top_k,
+                                        include=["documents", "distances", "metadatas"])
                     all_results.append(result)
                 except Exception:
                     continue
@@ -125,25 +130,39 @@ class VectorStore:
 
         documents = results["documents"][0]
         distances = results.get("distances", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0] if results.get("metadatas") else [{}] * len(documents)
 
-        return [(doc, 1.0 - dist) for doc, dist in zip(documents, distances)]
+        enriched = []
+        for i, (doc, dist) in enumerate(zip(documents, distances)):
+            meta = metadatas[i] if i < len(metadatas) else {}
+            enriched.append({
+                "text": doc,
+                "score": round(1.0 - dist, 4),
+                "doc_id": meta.get("doc_id"),
+                "chunk_index": meta.get("chunk_index")
+            })
+        return enriched
 
     def _merge_results(self, all_results: list, top_k: int) -> dict:
         """合并多个 collection 的搜索结果"""
         merged_docs = []
         merged_dists = []
+        merged_metas = []
         for result in all_results:
             if result.get("documents") and result["documents"][0]:
                 merged_docs.extend(result["documents"][0])
                 merged_dists.extend(result.get("distances", [[]])[0])
+                metas = result.get("metadatas", [[]])[0] if result.get("metadatas") else [{}] * len(result["documents"][0])
+                merged_metas.extend(metas)
 
         # 按距离排序，取 top_k
-        paired = sorted(zip(merged_docs, merged_dists), key=lambda x: x[1])
+        paired = sorted(zip(merged_docs, merged_dists, merged_metas), key=lambda x: x[1])
         paired = paired[:top_k]
 
         return {
             "documents": [[p[0] for p in paired]],
-            "distances": [[p[1] for p in paired]]
+            "distances": [[p[1] for p in paired]],
+            "metadatas": [[p[2] for p in paired]]
         }
 
     def delete_document(self, doc_id: int, user_id: int = None):

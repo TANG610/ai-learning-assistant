@@ -340,6 +340,28 @@ class DocumentDAO:
     @staticmethod
     def delete(doc_id):
         conn = get_db()
+        # 手动级联删除所有关联记录（避免依赖 FK CASCADE，兼容性更好）
+        # 1. 对话相关（conversations 没有 ON DELETE CASCADE）
+        conv_ids = [r[0] for r in conn.execute(
+            "SELECT id FROM conversations WHERE document_id = ?", (doc_id,)
+        ).fetchall()]
+        for cid in conv_ids:
+            conn.execute("DELETE FROM messages WHERE conversation_id = ?", (cid,))
+            conn.execute("DELETE FROM conversations WHERE id = ?", (cid,))
+        # 2. 评测相关
+        assess_ids = [r[0] for r in conn.execute(
+            "SELECT id FROM assessments WHERE document_id = ?", (doc_id,)
+        ).fetchall()]
+        for aid in assess_ids:
+            conn.execute("DELETE FROM assessment_questions WHERE assessment_id = ?", (aid,))
+            conn.execute("DELETE FROM assessments WHERE id = ?", (aid,))
+        # 3. 其他直接关联表
+        conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (doc_id,))
+        conn.execute("DELETE FROM learning_progress WHERE document_id = ?", (doc_id,))
+        conn.execute("DELETE FROM study_sessions WHERE document_id = ?", (doc_id,))
+        conn.execute("DELETE FROM knowledge_points WHERE document_id = ?", (doc_id,))
+        conn.execute("UPDATE news_articles SET document_id = NULL WHERE document_id = ?", (doc_id,))
+        # 4. 最后删除文档本身
         conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
         conn.commit()
         conn.close()

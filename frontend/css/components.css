@@ -156,7 +156,7 @@
 /* Bubble body */
 .chat-bubble {
   max-width: 72%;
-  line-height: 1.75;
+  line-height: 1.6;
   font-size: 0.9375rem;
   position: relative;
 }
@@ -185,23 +185,73 @@
   word-break: break-word;
 }
 /* Markdown content in assistant bubble */
-.chat-assistant .chat-bubble .msg-text p { margin-bottom: 8px; }
-.chat-assistant .chat-bubble .msg-text p:last-child { margin-bottom: 0; }
+.chat-assistant .chat-bubble .msg-text { line-height: 1.6; }
+.chat-assistant .chat-bubble .msg-text > *:first-child { margin-top: 0 !important; }
+.chat-assistant .chat-bubble .msg-text > *:last-child { margin-bottom: 0 !important; }
+.chat-assistant .chat-bubble .msg-text p { margin: 0 0 4px; }
 .chat-assistant .chat-bubble .msg-text ul,
-.chat-assistant .chat-bubble .msg-text ol { padding-left: 20px; margin-bottom: 8px; }
-.chat-assistant .chat-bubble .msg-text li { margin-bottom: 4px; }
+.chat-assistant .chat-bubble .msg-text ol { padding-left: 18px; margin: 2px 0; }
+.chat-assistant .chat-bubble .msg-text li { margin: 0; padding: 1px 0; }
+.chat-assistant .chat-bubble .msg-text li > p { margin: 0; }
+.chat-assistant .chat-bubble .msg-text li > p:last-child { margin-bottom: 0; }
+.chat-assistant .chat-bubble .msg-text h1,
+.chat-assistant .chat-bubble .msg-text h2,
+.chat-assistant .chat-bubble .msg-text h3,
+.chat-assistant .chat-bubble .msg-text h4 {
+  color: var(--ink); font-weight: 700; margin: 8px 0 4px; line-height: 1.3;
+}
+.chat-assistant .chat-bubble .msg-text h1:first-child,
+.chat-assistant .chat-bubble .msg-text h2:first-child,
+.chat-assistant .chat-bubble .msg-text h3:first-child { margin-top: 0; }
+.chat-assistant .chat-bubble .msg-text h3 { font-size: 1.0rem; }
+.chat-assistant .chat-bubble .msg-text h4 { font-size: 0.92rem; }
 .chat-assistant .chat-bubble .msg-text code {
-  background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px;
-  font-size: 0.88em; font-family: var(--font-mono);
+  background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px;
+  font-size: 0.86em; font-family: var(--font-mono);
 }
 .chat-assistant .chat-bubble .msg-text pre {
   background: var(--ink); color: #e8e0d4;
-  padding: 12px 16px; border-radius: 8px;
-  overflow-x: auto; margin: 8px 0;
-  font-size: 0.85em; line-height: 1.5;
+  padding: 10px 14px; border-radius: 8px;
+  overflow-x: auto; margin: 6px 0;
+  font-size: 0.84em; line-height: 1.45;
 }
 .chat-assistant .chat-bubble .msg-text pre code {
   background: none; padding: 0; color: inherit;
+}
+.chat-assistant .chat-bubble .msg-text table {
+  width: 100%; border-collapse: collapse; margin: 6px 0;
+  font-size: 0.86em;
+}
+.chat-assistant .chat-bubble .msg-text th,
+.chat-assistant .chat-bubble .msg-text td {
+  border: 1px solid var(--border-heavy);
+  padding: 5px 8px; text-align: left;
+}
+.chat-assistant .chat-bubble .msg-text th {
+  background: var(--ivory); font-weight: 600; color: var(--ink);
+}
+.chat-assistant .chat-bubble .msg-text td {
+  color: var(--ink-soft);
+}
+.chat-assistant .chat-bubble .msg-text blockquote {
+  border-left: 3px solid var(--rust);
+  padding: 3px 12px; margin: 6px 0;
+  color: var(--ink-muted); background: rgba(212,101,42,0.04);
+  border-radius: 0 4px 4px 0;
+}
+.chat-assistant .chat-bubble .msg-text blockquote p { margin: 0; }
+.chat-assistant .chat-bubble .msg-text hr {
+  border: none; border-top: 1px solid var(--border);
+  margin: 8px 0;
+}
+.chat-assistant .chat-bubble .msg-text strong {
+  color: var(--ink); font-weight: 600;
+}
+.chat-assistant .chat-bubble .msg-text a {
+  color: var(--rust); text-decoration: underline;
+}
+.chat-assistant .chat-bubble .msg-text img {
+  max-width: 100%; border-radius: 6px;
 }
 
 /* User message: right-aligned layout */
@@ -214,12 +264,117 @@
 }
 
 .chat-sources {
-  margin-top: 10px; padding: 8px 14px;
+  margin-top: 12px;
+  font-size: 0.75rem;
+  animation: srcReveal 0.3s var(--ease-out-expo) both;
+}
+
+.source-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
   background: rgba(212, 101, 42, 0.06);
-  font-size: 0.75rem; color: var(--ink-muted);
+  color: var(--ink-muted);
   border-left: 3px solid var(--rust);
   border-radius: 0 6px 6px 0;
-  animation: srcReveal 0.3s var(--ease-out-expo) both;
+  cursor: pointer;
+  transition: background 0.2s;
+  user-select: none;
+}
+.source-header:hover {
+  background: rgba(212, 101, 42, 0.12);
+}
+.source-icon { font-size: 0.8rem; }
+.source-arrow {
+  margin-left: auto;
+  font-size: 0.7rem;
+  transition: transform 0.2s;
+}
+
+.source-list {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.source-card {
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  transition: border-color 0.2s;
+}
+.source-card:hover {
+  border-color: var(--rust);
+}
+
+.source-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 0.72rem;
+}
+.source-idx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--rust);
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.source-doc {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+.source-score {
+  color: var(--forest);
+  font-weight: 600;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.source-preview {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.source-full {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  color: var(--ink-muted);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.source-toggle {
+  margin-top: 4px;
+  color: var(--rust);
+  cursor: pointer;
+  font-size: 0.68rem;
+  font-weight: 600;
+  user-select: none;
+}
+.source-toggle:hover {
+  text-decoration: underline;
 }
 @keyframes srcReveal {
   from { opacity: 0; transform: translateX(-6px); }

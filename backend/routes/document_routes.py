@@ -122,6 +122,12 @@ def _update_progress(doc_id, stage, pct):
 @document_bp.route("/api/documents/<int:doc_id>", methods=["DELETE"])
 @require_auth
 def delete_document(doc_id):
+    # 校验文档归属当前用户
+    doc = DocumentDAO.get_by_id(doc_id)
+    if not doc:
+        return jsonify({"error": "文档不存在"}), 404
+    if doc.get("user_id") and doc["user_id"] != g.user_id:
+        return jsonify({"error": "无权删除此文档"}), 403
     result = DocumentService.delete_document(doc_id)
     if "error" in result:
         return jsonify(result), 404

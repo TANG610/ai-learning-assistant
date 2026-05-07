@@ -6,7 +6,7 @@ from flask import Blueprint, request, jsonify, Response, stream_with_context, g
 from services.claude_service import LLMService
 from services.document_service import DocumentService
 from models.database import (
-    ConversationDAO, ProgressDAO, KnowledgeDAO, StudySessionDAO
+    ConversationDAO, ProgressDAO, KnowledgeDAO, StudySessionDAO, DocumentDAO, get_db
 )
 from backend.middleware.auth import require_auth
 
@@ -63,17 +63,43 @@ def send_message(conv_id):
 
     # RAG 检索
     context_chunks = []
+    sources_meta = []
     if document_id:
         search_results = DocumentService.search_documents(user_message, document_id, top_k=5, user_id=g.user_id)
-        context_chunks = [chunk for chunk, score in search_results if score > 0.3]
+        # 分离：LLM 需要纯文本，前端需要结构化元数据
+        for item in search_results:
+            if item["score"] > 0.3:
+                context_chunks.append(item["text"])
+                sources_meta.append({
+                    "doc_id": item.get("doc_id"),
+                    "doc_name": _get_doc_name(item.get("doc_id")),
+                    "chunk_index": item.get("chunk_index"),
+                    "score": item["score"],
+                    "preview": item["text"][:120].replace("\n", " "),
+                    "content": item["text"]
+                })
 
     if use_stream:
-        return _stream_response(conv_id, user_message, document_id, context_chunks)
+        return _stream_response(conv_id, user_message, document_id, context_chunks, sources_meta)
     else:
-        return _normal_response(conv_id, user_message, document_id, context_chunks)
+        return _normal_response(conv_id, user_message, document_id, context_chunks, sources_meta)
 
 
-def _normal_response(conv_id, user_message, document_id, context_chunks):
+def _get_doc_name(doc_id):
+    """根据文档 ID 查文档文件名"""
+    if not doc_id:
+        return "未知文档"
+    try:
+        doc = DocumentDAO.get_by_id(doc_id)
+        if not doc:
+            return f"文档{doc_id}"
+        # 兼容：部分表有 title 字段，部分只有 filename
+        return doc.get("title") or doc.get("filename") or f"文档{doc_id}"
+    except Exception:
+        return f"文档{doc_id}"
+
+
+def _normal_response(conv_id, user_message, document_id, context_chunks, sources_meta):
     """非流式响应"""
     reply = llm_service.chat(conv_id, user_message, context_chunks, user_id=g.user_id)
 
@@ -84,12 +110,12 @@ def _normal_response(conv_id, user_message, document_id, context_chunks):
 
     return jsonify({
         "reply": reply,
-        "sources": context_chunks,
-        "source_count": len(context_chunks)
+        "sources": sources_meta,
+        "source_count": len(sources_meta)
     })
 
 
-def _stream_response(conv_id, user_message, document_id, context_chunks):
+def _stream_response(conv_id, user_message, document_id, context_chunks, sources_meta):
     """SSE 流式响应"""
     def generate():
         full_reply = ""
@@ -98,7 +124,7 @@ def _stream_response(conv_id, user_message, document_id, context_chunks):
                 full_reply += chunk
                 yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
 
-            yield f"data: {json.dumps({'done': True, 'sources': context_chunks}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'sources': sources_meta}, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
 
@@ -142,7 +168,7 @@ def generate_practice():
     context = ""
     if document_id:
         results = DocumentService.search_documents(topic, document_id, top_k=10, user_id=g.user_id)
-        context = "\n\n".join([chunk for chunk, _ in results])
+        context = "\n\n".join([item["text"] for item in results])
 
     result = llm_service.generate_practice_questions(topic, context, count, difficulty)
 
