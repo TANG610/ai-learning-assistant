@@ -1,4 +1,4 @@
-/* 智能对话页面 v2.2 — 访谈对开页 */
+/* 智能对话页面 v3.0 — 现代AI对话风格 */
 
 import { api } from '../api.js';
 import { createEl, renderTopbar, showEmpty } from '../components.js';
@@ -32,7 +32,11 @@ export function renderChatPage() {
       <!-- 主对话区 -->
       <div class="chat-main">
         <div id="chatHistory" class="chat-history">
-          ${showEmpty('', '选择文档或直接提问开始对话')}
+          <div class="chat-welcome">
+            <div class="chat-welcome-icon">✦</div>
+            <h3>AI 学习助手</h3>
+            <p>选择文档或直接提问，开始一段智能对话</p>
+          </div>
         </div>
         <div class="chat-input-area">
           <textarea id="chatInput" placeholder="输入问题，Enter 发送，Shift+Enter 换行" rows="1"></textarea>
@@ -53,7 +57,13 @@ export function renderChatPage() {
   document.getElementById('newChatBtn').addEventListener('click', () => {
     convId = null;
     isFirstMsg = true;
-    chatHistory.innerHTML = showEmpty('', '开始新的对话');
+    chatHistory.innerHTML = `
+      <div class="chat-welcome">
+        <div class="chat-welcome-icon">✦</div>
+        <h3>AI 学习助手</h3>
+        <p>选择文档或直接提问，开始一段智能对话</p>
+      </div>
+    `;
   });
 
   async function sendMessage() {
@@ -90,7 +100,7 @@ export function renderChatPage() {
           const srcDiv = document.createElement('div');
           srcDiv.className = 'chat-sources';
           srcDiv.textContent = `引用 ${data.sources.length} 个资料片段`;
-          aiMsg.appendChild(srcDiv);
+          aiMsg.querySelector('.chat-bubble').appendChild(srcDiv);
         }
       },
       err => {
@@ -115,11 +125,34 @@ function addMessage(role, content, isStreaming = false) {
   const cls = role === 'user' ? 'chat-user' : 'chat-assistant';
   const div = createEl('div', { className: `chat-message ${cls}` });
 
-  if (isStreaming) {
-    div.innerHTML = '<span class="msg-text" style="white-space:pre-wrap"></span><div class="typing-dots"><span></span><span></span><span></span></div>';
+  const avatarLetter = role === 'user' ? 'U' : 'AI';
+
+  if (role === 'user') {
+    if (isStreaming) {
+      div.innerHTML = `
+        <div class="chat-bubble"><span class="msg-text" style="white-space:pre-wrap"></span><div class="typing-dots"><span></span><span></span><span></span></div></div>
+        <div class="chat-avatar">${avatarLetter}</div>
+      `;
+    } else {
+      div.innerHTML = `
+        <div class="chat-bubble"><span class="msg-text" style="white-space:pre-wrap">${escapeHtml(content)}</span></div>
+        <div class="chat-avatar">${avatarLetter}</div>
+      `;
+    }
   } else {
-    div.innerHTML = `<span class="msg-text" style="white-space:pre-wrap">${escapeHtml(content)}</span>`;
+    if (isStreaming) {
+      div.innerHTML = `
+        <div class="chat-avatar">${avatarLetter}</div>
+        <div class="chat-bubble"><span class="msg-text" style="white-space:pre-wrap"></span><div class="typing-dots"><span></span><span></span><span></span></div></div>
+      `;
+    } else {
+      div.innerHTML = `
+        <div class="chat-avatar">${avatarLetter}</div>
+        <div class="chat-bubble"><span class="msg-text" style="white-space:pre-wrap">${escapeHtml(content)}</span></div>
+      `;
+    }
   }
+
   chatHistory.appendChild(div);
   chatHistory.scrollTop = chatHistory.scrollHeight;
   return div;

@@ -34,3 +34,6 @@ embedding_model/
 
 # Root-level db
 chemai.db
+
+
+.workbuddy/
