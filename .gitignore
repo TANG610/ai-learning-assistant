@@ -27,7 +27,9 @@ Thumbs.db
 logs/
 *.log
 
-# Large model binaries
+
+# embedding models
+embedding_model/
 *.safetensors
 
 # Root-level db

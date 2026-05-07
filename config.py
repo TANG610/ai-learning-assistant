@@ -106,7 +106,7 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 
 # Embedding 模型：优先使用本地目录（离线），其次在线下载
 _LOCAL_MINI_LM = BASE_DIR / "embedding_model" / "all-MiniLM-L6-v2"
-_LOCAL_BGE = BASE_DIR / "embedding_model" / "bge-small-zh-v1.5"
+_LOCAL_BGE = BASE_DIR / "embedding_model" / "bge-large-zh-v1.5"
 _DEFAULT_EMBEDDING = str(_LOCAL_BGE) if _LOCAL_BGE.exists() else (str(_LOCAL_MINI_LM) if _LOCAL_MINI_LM.exists() else "all-MiniLM-L6-v2")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", _DEFAULT_EMBEDDING)
 
