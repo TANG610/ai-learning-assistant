@@ -93,6 +93,9 @@ if not UPLOAD_DIR.is_absolute():
 VECTOR_DB_DIR = Path(os.getenv("VECTOR_DB_DIR", str(DATA_DIR / "vector_db")))
 if not VECTOR_DB_DIR.is_absolute():
     VECTOR_DB_DIR = BASE_DIR / VECTOR_DB_DIR
+CHROMA_HOST = os.getenv("CHROMA_HOST", "127.0.0.1")
+CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
+CHROMA_SSL = os.getenv("CHROMA_SSL", "false").lower() in ("1", "true", "yes", "on")
 REPORT_DIR = Path(os.getenv("REPORT_DIR", str(DATA_DIR / "reports")))
 if not REPORT_DIR.is_absolute():
     REPORT_DIR = BASE_DIR / REPORT_DIR

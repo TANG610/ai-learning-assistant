@@ -219,7 +219,7 @@ def init_db():
             title TEXT NOT NULL,
             url TEXT NOT NULL UNIQUE,
             source_name TEXT DEFAULT '',
-            source_type TEXT DEFAULT 'manual' CHECK(source_type IN ('manual','rss','digest')),
+            source_type TEXT DEFAULT 'manual' CHECK(source_type IN ('manual','rss','digest','xhs_api','douyin_api')),
             language TEXT DEFAULT 'zh' CHECK(language IN ('zh','en','unknown')),
             summary TEXT DEFAULT '',
             key_points TEXT DEFAULT '',
@@ -230,6 +230,9 @@ def init_db():
             content TEXT DEFAULT '',
             fetched_at TEXT DEFAULT (datetime('now','localtime')),
             user_id INTEGER,
+            media_type TEXT DEFAULT 'text',
+            media_url TEXT DEFAULT '',
+            transcript TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now','localtime')),
             FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE SET NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -245,8 +248,87 @@ def init_db():
             last_fetched_at TEXT,
             article_count INTEGER DEFAULT 0,
             user_id INTEGER,
+            source_platform TEXT DEFAULT 'rss',
             created_at TEXT DEFAULT (datetime('now','localtime')),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- 采集源配置表（小红书/抖音等）
+        CREATE TABLE IF NOT EXISTS media_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            crawler_type TEXT DEFAULT 'search',
+            keywords TEXT DEFAULT '',
+            creator_ids TEXT DEFAULT '',
+            login_type TEXT DEFAULT 'qrcode',
+            cookies TEXT DEFAULT '',
+            enable_comments INTEGER DEFAULT 1,
+            max_results INTEGER DEFAULT 1,
+            is_active INTEGER DEFAULT 1,
+            last_fetched_at TEXT,
+            article_count INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- 采集任务表：持久化采集生命周期，避免服务重启后状态丢失
+        CREATE TABLE IF NOT EXISTS collector_tasks (
+            task_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL UNIQUE,
+            source_id INTEGER NOT NULL,
+            user_id INTEGER,
+            source_name TEXT DEFAULT '',
+            platform TEXT DEFAULT '',
+            crawler_type TEXT DEFAULT '',
+            status TEXT DEFAULT 'running',
+            started_ts REAL DEFAULT 0,
+            started_at TEXT DEFAULT (datetime('now','localtime')),
+            completed_at TEXT,
+            stopped_at TEXT,
+            imported INTEGER DEFAULT 0,
+            skipped INTEGER DEFAULT 0,
+            article_count INTEGER DEFAULT 0,
+            progress TEXT DEFAULT '{}',
+            errors TEXT DEFAULT '[]',
+            result_files TEXT DEFAULT '[]',
+            crawler_result TEXT DEFAULT '{}',
+            error TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (source_id) REFERENCES media_sources(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- 原始采集项表：先落原始记录，再异步整理/入库，便于重试和复盘
+        CREATE TABLE IF NOT EXISTS raw_collected_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            source_id INTEGER NOT NULL,
+            user_id INTEGER,
+            platform TEXT DEFAULT '',
+            source_name TEXT DEFAULT '',
+            file_path TEXT DEFAULT '',
+            record_index INTEGER DEFAULT 0,
+            canonical_id TEXT DEFAULT '',
+            url TEXT DEFAULT '',
+            title TEXT DEFAULT '',
+            content TEXT DEFAULT '',
+            record_json TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            skip_reason TEXT DEFAULT '',
+            error TEXT DEFAULT '',
+            article_id INTEGER,
+            document_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (task_id) REFERENCES collector_tasks(task_id) ON DELETE CASCADE,
+            FOREIGN KEY (source_id) REFERENCES media_sources(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(task_id, file_path, record_index)
         );
 
         -- 用户设置表
@@ -272,6 +354,11 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_news_doc ON news_articles(document_id);
         CREATE INDEX IF NOT EXISTS idx_news_url ON news_articles(url);
         CREATE INDEX IF NOT EXISTS idx_rss_user ON rss_sources(user_id);
+        CREATE INDEX IF NOT EXISTS idx_media_sources_user ON media_sources(user_id);
+        CREATE INDEX IF NOT EXISTS idx_collector_tasks_user ON collector_tasks(user_id);
+        CREATE INDEX IF NOT EXISTS idx_collector_tasks_status ON collector_tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_raw_items_task ON raw_collected_items(task_id);
+        CREATE INDEX IF NOT EXISTS idx_raw_items_status ON raw_collected_items(status);
     """)
 
     conn.commit()
@@ -385,7 +472,7 @@ class ConversationDAO:
     @staticmethod
     def get_all(user_id=None):
         conn = get_db()
-        if user_id:
+        if user_id is not None:
             rows = conn.execute(
                 "SELECT c.*, COUNT(m.id) as message_count "
                 "FROM conversations c LEFT JOIN messages m ON c.id = m.conversation_id "
@@ -401,6 +488,22 @@ class ConversationDAO:
             ).fetchall()
         conn.close()
         return [dict(r) for r in rows]
+
+    @staticmethod
+    def get_by_id(conv_id, user_id=None):
+        conn = get_db()
+        if user_id is not None:
+            row = conn.execute(
+                "SELECT * FROM conversations WHERE id = ? AND user_id = ?",
+                (conv_id, user_id)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM conversations WHERE id = ?",
+                (conv_id,)
+            ).fetchone()
+        conn.close()
+        return dict(row) if row else None
 
     @staticmethod
     def get_messages(conv_id):
@@ -961,5 +1064,284 @@ class RssSourceDAO:
     def delete(source_id):
         conn = get_db()
         conn.execute("DELETE FROM rss_sources WHERE id = ?", (source_id,))
+        conn.commit()
+        conn.close()
+
+
+class MediaSourceDAO:
+    """采集源配置数据操作（小红书/抖音等）"""
+
+    @staticmethod
+    def create(user_id, name, platform, crawler_type='search', keywords='',
+               creator_ids='', login_type='qrcode', cookies='',
+               enable_comments=1, max_results=1):
+        conn = get_db()
+        cursor = conn.execute(
+            "INSERT INTO media_sources (user_id, name, platform, crawler_type, "
+            "keywords, creator_ids, login_type, cookies, enable_comments, max_results) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, name, platform, crawler_type, keywords, creator_ids,
+             login_type, cookies, enable_comments, max_results)
+        )
+        sid = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return sid
+
+    @staticmethod
+    def get_all(user_id=None):
+        conn = get_db()
+        if user_id:
+            rows = conn.execute(
+                "SELECT * FROM media_sources WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM media_sources ORDER BY created_at DESC"
+            ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def get_by_id(source_id):
+        conn = get_db()
+        row = conn.execute(
+            "SELECT * FROM media_sources WHERE id = ?", (source_id,)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    @staticmethod
+    def get_active(user_id=None):
+        conn = get_db()
+        if user_id:
+            rows = conn.execute(
+                "SELECT * FROM media_sources WHERE is_active = 1 AND user_id = ?",
+                (user_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM media_sources WHERE is_active = 1"
+            ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def get_by_platform(platform, user_id=None):
+        conn = get_db()
+        if user_id:
+            rows = conn.execute(
+                "SELECT * FROM media_sources WHERE platform = ? AND user_id = ? ORDER BY created_at DESC",
+                (platform, user_id)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM media_sources WHERE platform = ? ORDER BY created_at DESC",
+                (platform,)
+            ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def update(source_id, **kwargs):
+        conn = get_db()
+        allowed = {'name', 'platform', 'crawler_type', 'keywords', 'creator_ids',
+                   'login_type', 'cookies', 'enable_comments', 'max_results',
+                   'is_active', 'last_fetched_at', 'article_count'}
+        sets = []
+        params = []
+        for k, v in kwargs.items():
+            if k in allowed:
+                sets.append(f"{k} = ?")
+                params.append(v)
+        if not sets:
+            conn.close()
+            return
+        sets.append("updated_at = datetime('now','localtime')")
+        params.append(source_id)
+        conn.execute(f"UPDATE media_sources SET {', '.join(sets)} WHERE id = ?", params)
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def delete(source_id):
+        conn = get_db()
+        conn.execute("DELETE FROM media_sources WHERE id = ?", (source_id,))
+        conn.commit()
+        conn.close()
+
+
+class CollectorTaskDAO:
+    """采集任务状态数据操作"""
+
+    JSON_FIELDS = {"progress", "errors", "result_files", "crawler_result"}
+
+    @staticmethod
+    def _decode(row):
+        if not row:
+            return None
+        data = dict(row)
+        for field in CollectorTaskDAO.JSON_FIELDS:
+            raw = data.get(field)
+            if isinstance(raw, str):
+                try:
+                    data[field] = json.loads(raw) if raw else ([] if field in {"errors", "result_files"} else {})
+                except json.JSONDecodeError:
+                    data[field] = [] if field in {"errors", "result_files"} else {}
+        return data
+
+    @staticmethod
+    def create(task_id, run_id, source_id, user_id, source_name, platform,
+               crawler_type, started_ts, started_at, crawler_result=None,
+               progress=None):
+        conn = get_db()
+        conn.execute(
+            "INSERT OR REPLACE INTO collector_tasks "
+            "(task_id, run_id, source_id, user_id, source_name, platform, crawler_type, "
+            "status, started_ts, started_at, crawler_result, progress, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, datetime('now','localtime'))",
+            (
+                task_id, run_id, source_id, user_id, source_name, platform,
+                crawler_type, started_ts, started_at,
+                json.dumps(crawler_result or {}, ensure_ascii=False),
+                json.dumps(progress or {}, ensure_ascii=False),
+            )
+        )
+        conn.commit()
+        conn.close()
+        return task_id
+
+    @staticmethod
+    def get(task_id):
+        conn = get_db()
+        row = conn.execute("SELECT * FROM collector_tasks WHERE task_id = ?", (task_id,)).fetchone()
+        conn.close()
+        return CollectorTaskDAO._decode(row)
+
+    @staticmethod
+    def list(user_id=None, statuses=None, limit=50):
+        conn = get_db()
+        where = []
+        params = []
+        if user_id is not None:
+            where.append("user_id = ?")
+            params.append(user_id)
+        if statuses:
+            placeholders = ",".join(["?"] * len(statuses))
+            where.append(f"status IN ({placeholders})")
+            params.extend(statuses)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        rows = conn.execute(
+            f"SELECT * FROM collector_tasks {clause} ORDER BY created_at DESC LIMIT ?",
+            params + [limit]
+        ).fetchall()
+        conn.close()
+        return [CollectorTaskDAO._decode(r) for r in rows]
+
+    @staticmethod
+    def update(task_id, **kwargs):
+        conn = get_db()
+        allowed = {
+            "status", "completed_at", "stopped_at", "imported", "skipped",
+            "article_count", "progress", "errors", "result_files",
+            "crawler_result", "error",
+        }
+        sets = []
+        params = []
+        for key, value in kwargs.items():
+            if key not in allowed:
+                continue
+            if key in CollectorTaskDAO.JSON_FIELDS:
+                value = json.dumps(value if value is not None else ([] if key in {"errors", "result_files"} else {}), ensure_ascii=False)
+            sets.append(f"{key} = ?")
+            params.append(value)
+        if not sets:
+            conn.close()
+            return
+        sets.append("updated_at = datetime('now','localtime')")
+        params.append(task_id)
+        conn.execute(f"UPDATE collector_tasks SET {', '.join(sets)} WHERE task_id = ?", params)
+        conn.commit()
+        conn.close()
+
+
+class RawCollectedItemDAO:
+    """原始采集记录数据操作"""
+
+    @staticmethod
+    def _decode(row):
+        if not row:
+            return None
+        data = dict(row)
+        try:
+            data["record"] = json.loads(data.get("record_json") or "{}")
+        except json.JSONDecodeError:
+            data["record"] = {}
+        return data
+
+    @staticmethod
+    def create(task_id, run_id, source_id, user_id, platform, source_name,
+               file_path, record_index, record, canonical_id='', url='',
+               title='', content=''):
+        conn = get_db()
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO raw_collected_items "
+            "(task_id, run_id, source_id, user_id, platform, source_name, file_path, "
+            "record_index, canonical_id, url, title, content, record_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_id, run_id, source_id, user_id, platform, source_name,
+                file_path, record_index, canonical_id, url, title, content,
+                json.dumps(record or {}, ensure_ascii=False),
+            )
+        )
+        item_id = cursor.lastrowid
+        if not item_id:
+            row = conn.execute(
+                "SELECT id FROM raw_collected_items WHERE task_id=? AND file_path=? AND record_index=?",
+                (task_id, file_path, record_index)
+            ).fetchone()
+            item_id = row["id"] if row else None
+        conn.commit()
+        conn.close()
+        return item_id
+
+    @staticmethod
+    def get(item_id):
+        conn = get_db()
+        row = conn.execute("SELECT * FROM raw_collected_items WHERE id = ?", (item_id,)).fetchone()
+        conn.close()
+        return RawCollectedItemDAO._decode(row)
+
+    @staticmethod
+    def list_by_task(task_id, statuses=None, limit=None):
+        conn = get_db()
+        params = [task_id]
+        where = ["task_id = ?"]
+        if statuses:
+            placeholders = ",".join(["?"] * len(statuses))
+            where.append(f"status IN ({placeholders})")
+            params.extend(statuses)
+        limit_sql = " LIMIT ?" if limit else ""
+        if limit:
+            params.append(limit)
+        rows = conn.execute(
+            f"SELECT * FROM raw_collected_items WHERE {' AND '.join(where)} "
+            f"ORDER BY id ASC{limit_sql}",
+            params
+        ).fetchall()
+        conn.close()
+        return [RawCollectedItemDAO._decode(r) for r in rows]
+
+    @staticmethod
+    def update_status(item_id, status, skip_reason='', error='', article_id=None, document_id=None):
+        conn = get_db()
+        conn.execute(
+            "UPDATE raw_collected_items SET status=?, skip_reason=?, error=?, "
+            "article_id=COALESCE(?, article_id), document_id=COALESCE(?, document_id), "
+            "updated_at=datetime('now','localtime') WHERE id=?",
+            (status, skip_reason, error, article_id, document_id, item_id)
+        )
         conn.commit()
         conn.close()

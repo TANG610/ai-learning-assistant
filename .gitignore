@@ -9,7 +9,10 @@ venv/
 # 数据
 data/uploads/*
 data/vector_db/*
+data/vector_db.bak/
 data/reports/*
+data/imports/
+data/transcripts/
 data/*.db
 !data/.gitkeep
 
@@ -30,7 +33,12 @@ logs/
 
 # embedding models
 embedding_model/
+models/
 *.safetensors
+
+# evaluation outputs
+eval/results/
+eval/__pycache__/
 
 # Root-level db
 chemai.db

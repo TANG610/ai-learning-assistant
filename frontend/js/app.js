@@ -11,6 +11,7 @@ const pages = {
   progress: () => import('./pages/progress.js').then(m => m.renderProgressPage()),
   report: () => import('./pages/report.js').then(m => m.renderReportPage()),
   quiz: () => import('./pages/quiz.js').then(m => m.renderQuizPage()),
+  collect: () => import('./pages/collect.js').then(m => m.renderCollectPage()),
   settings: () => import('./pages/settings.js').then(m => m.renderSettingsPage())
 };
 

@@ -1,9 +1,9 @@
 """
 文档解析服务 - 支持 PDF/PPTX/DOCX/Markdown
 """
-import os
+import re
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import config
 
 
@@ -158,3 +158,90 @@ def chunk_text(text: str, chunk_size: int = None, overlap: int = None) -> List[s
         chunks.append(current_chunk.strip())
 
     return chunks
+
+
+def chunk_markdown_by_headings(text: str, chunk_size: int = None, overlap: int = None) -> List[str]:
+    """Split Markdown by heading sections, falling back to chunk_text when needed."""
+    chunk_size = chunk_size or config.CHUNK_SIZE
+    overlap = overlap or config.CHUNK_OVERLAP
+
+    if not text.strip():
+        return []
+
+    sections = _split_markdown_sections(text)
+    if not sections:
+        return chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+
+    chunks = []
+    for section in sections:
+        chunks.extend(_chunk_markdown_section(section, chunk_size, overlap))
+    return [chunk for chunk in chunks if chunk.strip()]
+
+
+def _split_markdown_sections(text: str) -> List[Dict[str, str]]:
+    heading_re = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+    sections = []
+    current = None
+    heading_stack = []
+    preamble = []
+    in_code_fence = False
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_fence = not in_code_fence
+
+        match = heading_re.match(line) if not in_code_fence else None
+        if match:
+            if current:
+                sections.append(current)
+            elif preamble and "".join(preamble).strip():
+                sections.append({
+                    "path": "Preamble",
+                    "text": "\n".join(preamble).strip(),
+                })
+                preamble = []
+
+            level = len(match.group(1))
+            title = _clean_markdown_heading(match.group(2))
+            heading_stack = heading_stack[:level - 1]
+            heading_stack.append(title)
+            current = {
+                "path": " > ".join([h for h in heading_stack if h]),
+                "text": line,
+            }
+            continue
+
+        if current:
+            current["text"] += "\n" + line
+        else:
+            preamble.append(line)
+
+    if current:
+        sections.append(current)
+    elif preamble and "".join(preamble).strip():
+        sections.append({
+            "path": "Preamble",
+            "text": "\n".join(preamble).strip(),
+        })
+
+    return sections if any(section["path"] != "Preamble" for section in sections) else []
+
+
+def _chunk_markdown_section(section: Dict[str, str], chunk_size: int, overlap: int) -> List[str]:
+    path = section.get("path") or "Untitled"
+    section_text = (section.get("text") or "").strip()
+    prefix = f"[Title Path] {path}\n\n"
+    full_text = f"{prefix}{section_text}".strip()
+
+    if len(full_text) <= chunk_size:
+        return [full_text]
+
+    effective_size = max(120, chunk_size - len(prefix))
+    section_chunks = chunk_text(section_text, chunk_size=effective_size, overlap=overlap)
+    return [f"{prefix}{chunk}".strip() for chunk in section_chunks]
+
+
+def _clean_markdown_heading(title: str) -> str:
+    title = re.sub(r"\s+", " ", title or "").strip()
+    return title.strip("#").strip()

@@ -2,6 +2,7 @@
 API 路由 - 文档管理
 """
 import os
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from flask import Blueprint, request, jsonify, g
 from services.document_service import DocumentService
@@ -78,6 +79,19 @@ def upload_document():
     file_category = "multimodal" if ext in IMAGE_EXTS else "text"
 
     try:
+        file_hash, file_size = _hash_upload_stream(file)
+        duplicate = _find_duplicate_upload(file.filename, file_size, file_hash, g.user_id)
+        if duplicate:
+            return jsonify({
+                "error": "该文件已存在于知识库中，请勿重复上传",
+                "duplicate_document": {
+                    "id": duplicate["id"],
+                    "filename": duplicate["filename"],
+                    "status": duplicate["status"],
+                    "chunk_count": duplicate.get("chunk_count", 0),
+                }
+            }), 409
+
         file_path, file_type, file_size = DocumentService.save_upload(file, file.filename, user_id=g.user_id)
         doc_id = DocumentDAO.create(file.filename, file_type, file_path, file_size, user_id=g.user_id, file_category=file_category)
 
@@ -99,6 +113,50 @@ def upload_document():
         return jsonify({"error": str(e)}), 500
 
 
+def _hash_upload_stream(file):
+    """Return sha256 and size for an uploaded file, then rewind its stream."""
+    hasher = hashlib.sha256()
+    size = 0
+    stream = file.stream
+    stream.seek(0)
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        hasher.update(chunk)
+        size += len(chunk)
+    stream.seek(0)
+    return hasher.hexdigest(), size
+
+
+def _find_duplicate_upload(filename, file_size, file_hash, user_id):
+    conn = get_db()
+    if user_id is not None:
+        rows = conn.execute(
+            "SELECT id, filename, file_path, file_size, status, chunk_count "
+            "FROM documents WHERE user_id = ? AND file_size = ?",
+            (user_id, file_size),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, filename, file_path, file_size, status, chunk_count "
+            "FROM documents WHERE user_id IS NULL AND file_size = ?",
+            (file_size,),
+        ).fetchall()
+    conn.close()
+
+    for row in rows:
+        path = row["file_path"]
+        if path and os.path.exists(path) and _file_sha256(path) == file_hash:
+            return dict(row)
+    return None
+
+
+def _file_sha256(path):
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 def _process_in_background(doc_id):
     """后台线程处理文档（含进度上报）"""
     try:
@@ -117,6 +175,24 @@ def _process_in_background(doc_id):
 
 def _update_progress(doc_id, stage, pct):
     _doc_progress[doc_id] = {"status": "processing", "stage": stage, "stage_label": stage, "progress_pct": pct}
+
+
+def _queue_reparse_document(doc):
+    doc_id = int(doc["id"])
+    DocumentDAO.update_status(doc_id, "processing", chunk_count=doc.get("chunk_count", 0) or 0)
+    _doc_progress[doc_id] = {
+        "status": "processing",
+        "stage": "queued",
+        "stage_label": "重新解析已排队...",
+        "progress_pct": 5,
+    }
+    executor.submit(_process_in_background, doc_id)
+    return doc_id
+
+
+def _get_reparse_candidates(user_id):
+    docs = DocumentDAO.get_all(user_id=user_id)
+    return [doc for doc in docs if doc.get("status") != "processing"]
 
 
 @document_bp.route("/api/documents/<int:doc_id>", methods=["DELETE"])
@@ -141,11 +217,31 @@ def document_progress(doc_id):
     return jsonify(progress)
 
 
+@document_bp.route("/api/documents/reparse-all", methods=["POST"])
+@require_auth
+def reparse_all_documents():
+    candidates = _get_reparse_candidates(g.user_id)
+    queued_ids = [_queue_reparse_document(doc) for doc in candidates]
+    skipped_processing = len(DocumentDAO.get_all(user_id=g.user_id)) - len(candidates)
+
+    return jsonify({
+        "status": "processing" if queued_ids else "noop",
+        "queued_count": len(queued_ids),
+        "queued_doc_ids": queued_ids,
+        "skipped_processing": skipped_processing,
+    }), 202
+
+
 @document_bp.route("/api/documents/<int:doc_id>/reparse", methods=["POST"])
 @require_auth
 def reparse_document(doc_id):
     doc = DocumentDAO.get_by_id(doc_id)
     if not doc:
         return jsonify({"error": "文档不存在"}), 404
-    result = DocumentService.process_document(doc_id)
-    return jsonify(result)
+    if doc.get("user_id") and doc["user_id"] != g.user_id:
+        return jsonify({"error": "无权重新解析此文档"}), 403
+    if doc.get("status") == "processing":
+        return jsonify({"error": "文档正在处理中，请稍后再试"}), 409
+
+    _queue_reparse_document(doc)
+    return jsonify({"status": "processing", "doc_id": doc_id}), 202

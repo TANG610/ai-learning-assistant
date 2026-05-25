@@ -162,8 +162,8 @@ async function loadArticles() {
     }
 
     el.innerHTML = articles.map(a => {
-      const keyPoints = safeJsonParse(a.key_points, []);
-      const topics = safeJsonParse(a.topics, []);
+      const keyPoints = normalizeTextList(safeJsonParse(a.key_points, []));
+      const topics = normalizeTextList(safeJsonParse(a.topics, []));
       const langBadge = a.language === 'en' ? '<span class="news-badge news-badge-lang">EN</span>' : '';
       const isDigest = a.source_type === 'digest';
       const isRss = a.source_type === 'rss';
@@ -654,4 +654,16 @@ function formatTime(dateStr) {
 function safeJsonParse(str, fallback) {
   try { return JSON.parse(str); }
   catch (e) { return fallback; }
+}
+
+function normalizeTextList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(item => {
+    if (typeof item === 'string') return item.trim();
+    if (item && typeof item === 'object') {
+      const point = item.point || item.title || item.summary || item.name;
+      return String(point || '').trim() || JSON.stringify(item);
+    }
+    return String(item || '').trim();
+  }).filter(Boolean);
 }

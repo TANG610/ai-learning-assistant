@@ -269,6 +269,91 @@ class NewsService:
             return {"summary": raw[:200], "key_points": [], "topics": []}
 
     @staticmethod
+    def summarize_video_transcript(
+        title: str,
+        transcript: str,
+        desc: str = "",
+        tags: list = None,
+        segments: list = None,
+    ) -> dict:
+        """Generate structured extraction for a social video transcript."""
+        if not transcript:
+            return {
+                "summary": desc[:200] if desc else "",
+                "structure": [],
+                "key_takeaways": [],
+                "topics": tags or [],
+            }
+
+        def _fmt_ts(seconds):
+            seconds = max(0, int(seconds or 0))
+            minutes, secs = divmod(seconds, 60)
+            hours, minutes = divmod(minutes, 60)
+            return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+        segment_text = "\n".join(
+            f"[{_fmt_ts(seg.get('start', 0))}] {str(seg.get('text', '')).strip()}"
+            for seg in (segments or [])[:80]
+            if str(seg.get("text", "")).strip()
+        )
+
+        llm = LLMService()
+        prompt = f"""请把下面的短视频口播内容做结构化提取。
+
+标题：{title}
+视频描述：{desc or "无"}
+标签：{", ".join(tags or []) or "无"}
+
+完整文字稿：
+{transcript[:6000]}
+
+带时间戳片段：
+{segment_text[:6000] or "无"}
+
+要求：
+1. summary 用 3 句话概括核心内容。
+2. structure 提取 3-6 个核心观点，每个观点包含 point、evidence、timestamp。timestamp 优先使用上方片段里的时间，如 "0:30"。
+3. key_takeaways 给出 3-5 条可执行/可记忆的要点。
+4. topics 给出 3-5 个中文话题标签。
+5. 只输出 JSON，不要 Markdown 代码块。
+
+输出 JSON 格式：
+{{"summary":"3句话核心概括","structure":[{{"point":"核心观点","evidence":"论据/案例","timestamp":"0:30"}}],"key_takeaways":["要点1"],"topics":["话题1"]}}"""
+
+        raw = llm._call(
+            [
+                {"role": "system", "content": "你是视频内容分析助手，擅长把口播文字稿整理成可检索的结构化知识。只输出 JSON。"},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=2048,
+        )
+
+        raw = raw.strip()
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:]) if len(lines) > 1 else raw[3:]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+            raw = raw.strip()
+
+        try:
+            data = json.loads(raw)
+            return {
+                "summary": data.get("summary", ""),
+                "structure": data.get("structure", []),
+                "key_takeaways": data.get("key_takeaways", []),
+                "topics": data.get("topics", []),
+            }
+        except json.JSONDecodeError:
+            log.warning(f"Video LLM output is not JSON: {raw[:200]}")
+            return {
+                "summary": raw[:200],
+                "structure": [],
+                "key_takeaways": [],
+                "topics": tags or [],
+            }
+
+    @staticmethod
     def batch_summarize_articles(articles: list) -> list:
         """
         一次 LLM 调用来批量摘要多篇文章（大幅减少 LLM 调用次数）。

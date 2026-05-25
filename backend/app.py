@@ -24,6 +24,7 @@ from routes.progress_routes import progress_bp
 from routes.quiz_routes import quiz_bp
 from routes.auth_routes import auth_bp
 from routes.news_routes import news_bp
+from routes.collector_routes import collector_bp
 
 
 def create_app():
@@ -40,6 +41,7 @@ def create_app():
     app.register_blueprint(progress_bp)
     app.register_blueprint(quiz_bp)
     app.register_blueprint(news_bp)
+    app.register_blueprint(collector_bp)
 
     # 前端静态文件服务
     frontend_dir = project_root / "frontend"
@@ -225,5 +227,6 @@ if __name__ == "__main__":
     app.run(
         host=config.FLASK_HOST,
         port=config.FLASK_PORT,
-        debug=config.FLASK_DEBUG
+        debug=config.FLASK_DEBUG,
+        use_reloader=False
     )

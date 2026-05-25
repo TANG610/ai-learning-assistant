@@ -4,7 +4,7 @@ flask-cors==5.0.1
 openai==1.68.2
 
 # === 向量数据库 ===
-chromadb==1.0.8
+chromadb==1.5.9
 sentence-transformers==4.1.0
 
 # === 文档解析 ===
@@ -31,3 +31,5 @@ feedparser==6.0.11
 pytest==8.4.0
 pytest-flask==1.3.0
 pytest-cov==6.1.0
+imageio-ffmpeg==0.6.0
+faster-whisper==1.1.1
