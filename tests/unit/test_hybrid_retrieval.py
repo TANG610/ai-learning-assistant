@@ -75,6 +75,7 @@ def test_keyword_route_recalls_chunk_when_vector_route_is_empty(monkeypatch, tes
     assert results[0]["chunk_index"] == 0
     assert results[0]["retrieval_sources"] == ["keyword"]
     assert results[0]["keyword_score"] > 0
+    assert "bm25_score" in results[0]
 
 
 def test_rerank_prefers_dual_route_over_vector_only_match(monkeypatch, test_db):

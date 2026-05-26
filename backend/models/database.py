@@ -159,6 +159,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS assessments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             document_id INTEGER NOT NULL,
+            source_document_ids TEXT DEFAULT '',
+            scope_label TEXT DEFAULT '',
             status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed')),
             total_questions INTEGER DEFAULT 0,
             correct_count INTEGER DEFAULT 0,
@@ -776,10 +778,13 @@ class AssessmentDAO:
     """测评数据操作"""
 
     @staticmethod
-    def create(document_id, user_id=None):
+    def create(document_id, user_id=None, source_document_ids=None, scope_label=""):
         conn = get_db()
+        source_ids = source_document_ids or ([document_id] if document_id else [])
+        source_ids_text = ",".join(str(i) for i in source_ids if i)
         cursor = conn.execute(
-            "INSERT INTO assessments (document_id, user_id) VALUES (?, ?)", (document_id, user_id)
+            "INSERT INTO assessments (document_id, user_id, source_document_ids, scope_label) VALUES (?, ?, ?, ?)",
+            (document_id, user_id, source_ids_text, scope_label)
         )
         aid = cursor.lastrowid
         conn.commit()

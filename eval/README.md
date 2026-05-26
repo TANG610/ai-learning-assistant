@@ -65,10 +65,10 @@ Run retrieval-only evaluation:
 python eval/run_rag_eval.py
 ```
 
-By default, the runner mirrors the app's single-document QA mode: each evidence-backed case searches only the first `doc_id` listed in its `evidence`. To evaluate cross-document/global search, run:
+By default, the runner evaluates cross-document/global search across the user's whole knowledge base. To mirror the app's single-document QA mode, run:
 
 ```powershell
-python eval/run_rag_eval.py --scope-mode all
+python eval/run_rag_eval.py --scope-mode evidence_doc
 ```
 
 Run a small smoke test:
@@ -80,10 +80,23 @@ python eval/run_rag_eval.py --limit 3
 Generate answers with the configured LLM:
 
 ```powershell
-python eval/run_rag_eval.py --generate
+python eval/run_rag_eval.py --dataset eval/kb_cross_eval_dataset_v0_1.jsonl --generate
 ```
 
-Compute answer accuracy and hallucination rate from manual grades:
+Run end-to-end automatic evaluation with LLM Judge:
+
+```powershell
+python eval/run_rag_eval.py --dataset eval/kb_cross_eval_dataset_v0_1.jsonl --top-k 8 --ks 1,3,5,8 --generate --judge rules-llm --grades-output eval/results/auto_grades.jsonl --badcases-output eval/results/badcases.jsonl
+```
+
+`--judge` modes:
+
+- `none`: retrieval only, or generation without grading.
+- `rules`: deterministic checks, mainly useful for generation errors and no-answer/refusal cases.
+- `llm`: use LLM Judge for answer correctness, faithfulness, and hallucination labels.
+- `rules-llm`: apply rule fallback, then prefer LLM Judge when an answer exists.
+
+Compute answer accuracy and hallucination rate from manual or auto grades:
 
 ```powershell
 python eval/run_rag_eval.py --grades eval/manual_grades.jsonl
@@ -96,6 +109,14 @@ Manual grade rows use this JSONL shape:
 ```
 
 `answer_score` should be `1`, `0.5`, or `0`. `hallucination_type` should be `none`, `unsupported`, `contradiction`, `wrong_citation`, or another short label agreed by the reviewer.
+
+Recommended workflow:
+
+1. Curate or review the Golden Set.
+2. Run retrieval metrics automatically.
+3. Run `--generate --judge rules-llm` for automatic answer grading.
+4. Review only the exported badcases.
+5. Promote confirmed badcases back into the Golden Set.
 
 ## Suggested Coverage
 

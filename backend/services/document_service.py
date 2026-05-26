@@ -17,6 +17,8 @@ from backend.utils.logger import log
 class DocumentService:
     """文档上传与处理全流程"""
 
+    _keyword_index_checked = False
+
     @staticmethod
     def _safe_import_filename(title: str, max_len: int = 48) -> str:
         clean = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", title or "import")
@@ -154,6 +156,7 @@ class DocumentService:
             user_id = doc.get("user_id")
             vector_store = VectorStore()
             conn = get_db()
+            DocumentService._delete_keyword_index_for_document(conn, doc_id)
             conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (doc_id,))
             conn.commit()
             conn.close()
@@ -171,6 +174,7 @@ class DocumentService:
                     "VALUES (?, ?, ?, ?, ?)",
                     (doc_id, i, chunk, vid, user_id)
                 )
+            DocumentService._replace_keyword_index_for_document(conn, doc_id)
             # 保存 OCR 文本（多模态文件）
             if file_category == "multimodal":
                 conn.execute(
@@ -261,6 +265,14 @@ class DocumentService:
         vector_store = VectorStore()
         vector_store.delete_document(doc_id, user_id=user_id)
 
+        try:
+            conn = get_db()
+            DocumentService._delete_keyword_index_for_document(conn, doc_id)
+            conn.commit()
+            conn.close()
+        except BaseException:
+            pass
+
         # 删除数据库记录（级联删除 chunks, progress 等）
         DocumentDAO.delete(doc_id)
 
@@ -316,6 +328,97 @@ class DocumentService:
         if not tokens:
             return []
 
+        fts_results = DocumentService._bm25_search_documents(query, doc_id, top_k, user_id, tokens)
+        if fts_results:
+            return fts_results
+
+        return DocumentService._like_search_documents(query, doc_id, top_k, user_id, tokens)
+
+    @staticmethod
+    def _bm25_search_documents(
+        query: str,
+        doc_id: int = None,
+        top_k: int = 20,
+        user_id: int = None,
+        tokens: List[str] = None,
+    ) -> list:
+        tokens = tokens or DocumentService._tokenize_for_retrieval(query)
+        if not tokens:
+            return []
+
+        conn = None
+        try:
+            conn = get_db()
+            DocumentService._ensure_keyword_index(conn)
+        except BaseException as e:
+            log.warning(f"BM25 keyword index unavailable: {e}")
+            if conn:
+                conn.close()
+            return []
+
+        try:
+            match_query = DocumentService._fts_match_query(tokens[:16])
+            if not match_query:
+                return []
+
+            where_clauses = ["document_chunks_fts MATCH ?"]
+            params = [match_query]
+            if doc_id:
+                where_clauses.append("document_id = ?")
+                params.append(int(doc_id))
+            if user_id is not None:
+                where_clauses.append("user_id = ?")
+                params.append(int(user_id))
+
+            sql = (
+                "SELECT rowid, document_id, chunk_index, content, bm25(document_chunks_fts) AS bm25_score "
+                "FROM document_chunks_fts "
+                "WHERE " + " AND ".join(where_clauses) + " "
+                "ORDER BY bm25_score ASC "
+                "LIMIT ?"
+            )
+            rows = conn.execute(sql, params + [max(50, int(top_k) * 8)]).fetchall()
+        except BaseException as e:
+            log.warning(f"BM25 keyword search failed: {e}")
+            return []
+        finally:
+            conn.close()
+
+        scored = []
+        total = max(1, len(rows))
+        for rank, row in enumerate(rows, start=1):
+            content = row["content"] or ""
+            lexical_score, matched_terms = DocumentService._keyword_score(query, content, tokens)
+            if lexical_score <= 0:
+                continue
+            bm25_rank_score = 1.0 - ((rank - 1) / total)
+            keyword_score = min(1.0, 0.65 * lexical_score + 0.35 * bm25_rank_score)
+            bm25_score = float(row["bm25_score"] or 0.0)
+            scored.append({
+                "text": content,
+                "score": round(keyword_score, 4),
+                "keyword_score": round(keyword_score, 4),
+                "bm25_score": round(bm25_score, 6),
+                "matched_terms": matched_terms[:12],
+                "doc_id": row["document_id"],
+                "chunk_index": row["chunk_index"],
+            })
+
+        scored.sort(key=lambda item: (item["keyword_score"], -item["bm25_score"]), reverse=True)
+        return scored[:top_k]
+
+    @staticmethod
+    def _like_search_documents(
+        query: str,
+        doc_id: int = None,
+        top_k: int = 20,
+        user_id: int = None,
+        tokens: List[str] = None,
+    ) -> list:
+        tokens = tokens or DocumentService._tokenize_for_retrieval(query)
+        if not tokens:
+            return []
+
         like_tokens = tokens[:16]
         where_clauses = []
         params = []
@@ -368,6 +471,90 @@ class DocumentService:
         return scored[:top_k]
 
     @staticmethod
+    def _ensure_keyword_index(conn):
+        if DocumentService._keyword_index_checked:
+            return
+        if not DocumentService._fts_table_exists(conn):
+            return
+
+        chunk_count = conn.execute("SELECT COUNT(*) FROM document_chunks").fetchone()[0]
+        fts_count = conn.execute("SELECT COUNT(*) FROM document_chunks_fts").fetchone()[0]
+        if fts_count != chunk_count:
+            DocumentService._rebuild_keyword_index(conn)
+
+        DocumentService._keyword_index_checked = True
+
+    @staticmethod
+    def _fts_table_exists(conn) -> bool:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'document_chunks_fts'"
+        ).fetchone()
+        return bool(row)
+
+    @staticmethod
+    def _rebuild_keyword_index(conn):
+        conn.execute("DELETE FROM document_chunks_fts")
+        rows = conn.execute(
+            "SELECT id, document_id, chunk_index, content, user_id FROM document_chunks"
+        ).fetchall()
+        for row in rows:
+            DocumentService._insert_keyword_index_row(conn, row)
+        conn.commit()
+
+    @staticmethod
+    def _replace_keyword_index_for_document(conn, doc_id: int):
+        if not DocumentService._fts_table_exists(conn):
+            return
+        DocumentService._delete_keyword_index_for_document(conn, doc_id)
+        rows = conn.execute(
+            "SELECT id, document_id, chunk_index, content, user_id "
+            "FROM document_chunks WHERE document_id = ?",
+            (int(doc_id),),
+        ).fetchall()
+        for row in rows:
+            DocumentService._insert_keyword_index_row(conn, row)
+        DocumentService._keyword_index_checked = False
+
+    @staticmethod
+    def _delete_keyword_index_for_document(conn, doc_id: int):
+        if not DocumentService._fts_table_exists(conn):
+            return
+        conn.execute("DELETE FROM document_chunks_fts WHERE document_id = ?", (int(doc_id),))
+        DocumentService._keyword_index_checked = False
+
+    @staticmethod
+    def _insert_keyword_index_row(conn, row):
+        content = row["content"] or ""
+        conn.execute(
+            "INSERT OR REPLACE INTO document_chunks_fts "
+            "(rowid, token_text, content, document_id, chunk_index, user_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                row["id"],
+                DocumentService._build_fts_search_text(content),
+                content,
+                int(row["document_id"]),
+                int(row["chunk_index"]),
+                int(row["user_id"] or 0),
+            ),
+        )
+
+    @staticmethod
+    def _build_fts_search_text(text: str) -> str:
+        normalized = DocumentService._normalized_text(text)
+        tokens = DocumentService._tokenize_for_retrieval(text)
+        return " ".join([normalized] + tokens)
+
+    @staticmethod
+    def _fts_match_query(tokens: List[str]) -> str:
+        quoted = []
+        for token in tokens:
+            clean = (token or "").replace('"', '""').strip()
+            if clean:
+                quoted.append(f'"{clean}"')
+        return " OR ".join(quoted)
+
+    @staticmethod
     def _merge_retrieval_results(vector_results: list, keyword_results: list) -> list:
         merged: Dict[tuple, dict] = {}
 
@@ -383,6 +570,7 @@ class DocumentService:
                 "distance": item.get("distance"),
                 "vector_score": score,
                 "keyword_score": 0.0,
+                "bm25_score": None,
                 "vector_rank": rank,
                 "keyword_rank": None,
                 "retrieval_sources": ["vector"],
@@ -397,6 +585,7 @@ class DocumentService:
             existing = merged.get(key)
             if existing:
                 existing["keyword_score"] = max(existing.get("keyword_score", 0.0), keyword_score)
+                existing["bm25_score"] = item.get("bm25_score", existing.get("bm25_score"))
                 existing["keyword_rank"] = rank
                 existing["matched_terms"] = item.get("matched_terms", [])
                 if "keyword" not in existing["retrieval_sources"]:
@@ -411,6 +600,7 @@ class DocumentService:
                     "distance": None,
                     "vector_score": 0.0,
                     "keyword_score": keyword_score,
+                    "bm25_score": item.get("bm25_score"),
                     "vector_rank": None,
                     "keyword_rank": rank,
                     "retrieval_sources": ["keyword"],

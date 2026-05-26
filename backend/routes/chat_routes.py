@@ -109,6 +109,7 @@ def send_message(conv_id):
             "rerank_score": item.get("rerank_score", score),
             "vector_score": item.get("vector_score"),
             "keyword_score": item.get("keyword_score"),
+            "bm25_score": item.get("bm25_score"),
             "retrieval_sources": item.get("retrieval_sources", []),
             "matched_terms": item.get("matched_terms", []),
             "distance": item.get("distance"),

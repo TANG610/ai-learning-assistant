@@ -6,7 +6,7 @@ Use --generate to also produce model answers for manual grading.
 
 Examples:
     python eval/run_rag_eval.py
-    python eval/run_rag_eval.py --scope-mode all
+    python eval/run_rag_eval.py --scope-mode evidence_doc
     python eval/run_rag_eval.py --generate
     python eval/run_rag_eval.py --grades eval/manual_grades.jsonl
 """
@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -209,6 +210,14 @@ def summarize_grades(case_results: list[dict[str, Any]], grades: dict[str, dict[
     return {
         "graded_case_count": len(graded),
         "answer_accuracy": round(sum(item["answer_score"] for item in graded) / len(graded), 4),
+        "strict_answer_accuracy": round(
+            sum(1 for item in graded if item["answer_score"] >= 1.0) / len(graded),
+            4,
+        ),
+        "loose_answer_accuracy": round(
+            sum(1 for item in graded if item["answer_score"] >= 0.5) / len(graded),
+            4,
+        ),
         "hallucination_rate": round(len(hallucinated) / len(graded), 4),
         "hallucination_count": len(hallucinated),
     }
@@ -223,7 +232,7 @@ def build_generation_prompt(case: dict[str, Any], context_chunks: list[str]) -> 
         context_text = "（本次检索没有找到超过阈值的资料片段。）"
 
     return (
-        "请基于给定资料回答用户问题。若资料不足，请明确说明知识库没有足够依据，"
+        "请严格基于给定资料回答用户问题。若资料不足，请明确说明知识库没有足够依据，"
         "不要编造。若问题前提与资料矛盾，请先纠正前提。\n\n"
         f"{context_text}\n\n---\n\n"
         f"用户问题：{case['question']}"
@@ -241,6 +250,207 @@ def generate_answer(case: dict[str, Any], context_chunks: list[str]) -> str:
         {"role": "user", "content": build_generation_prompt(case, context_chunks)},
     ]
     return llm._call(messages)
+
+
+def extract_json_object(text: str) -> dict[str, Any]:
+    """Parse a JSON object from a judge response that may contain Markdown fences."""
+    raw = (text or "").strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, flags=re.S)
+        if not match:
+            raise
+        return json.loads(match.group(0))
+
+
+def normalize_grade(case_id: str, payload: dict[str, Any], source: str) -> dict[str, Any]:
+    score = payload.get("answer_score", 0.0)
+    try:
+        score = float(score)
+    except (TypeError, ValueError):
+        score = 0.0
+    hallucination_type = str(payload.get("hallucination_type", "none") or "none").strip() or "none"
+    confidence = payload.get("confidence", payload.get("judge_confidence", 0.0))
+    try:
+        confidence = float(confidence)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return {
+        "id": case_id,
+        "answer_score": max(0.0, min(1.0, score)),
+        "hallucination_type": hallucination_type,
+        "needs_human_review": bool(payload.get("needs_human_review", score < 1.0)),
+        "confidence": max(0.0, min(1.0, confidence)),
+        "reason": str(payload.get("reason", "") or ""),
+        "source": source,
+    }
+
+
+def rule_judge_answer(
+    case: dict[str, Any],
+    assistant_answer: str | None,
+    generation_error: str | None = None,
+) -> dict[str, Any]:
+    case_id = str(case["id"])
+    if generation_error:
+        return normalize_grade(case_id, {
+            "answer_score": 0,
+            "hallucination_type": "none",
+            "needs_human_review": True,
+            "confidence": 1,
+            "reason": f"Generation failed: {generation_error}",
+        }, "rules")
+
+    answer = (assistant_answer or "").strip()
+    if not answer:
+        return normalize_grade(case_id, {
+            "answer_score": 0,
+            "hallucination_type": "none",
+            "needs_human_review": True,
+            "confidence": 1,
+            "reason": "Empty answer.",
+        }, "rules")
+
+    expected = case.get("expected_behavior")
+    if expected == "refuse_or_say_unknown":
+        refusal_terms = ("没有", "未提供", "不足", "无法", "不能", "知识库", "资料中没有")
+        invented_terms = ("React Fiber", "fiber", "调度", "lane", "时间切片")
+        refused = any(term in answer for term in refusal_terms)
+        invented = sum(1 for term in invented_terms if term in answer) >= 3 and not refused
+        return normalize_grade(case_id, {
+            "answer_score": 1 if refused and not invented else 0,
+            "hallucination_type": "none" if refused and not invented else "unsupported",
+            "needs_human_review": not refused or invented,
+            "confidence": 0.85,
+            "reason": "Rule check for no-answer/refusal case.",
+        }, "rules")
+
+    return normalize_grade(case_id, {
+        "answer_score": 0.5,
+        "hallucination_type": "none",
+        "needs_human_review": True,
+        "confidence": 0.2,
+        "reason": "Rules cannot reliably grade evidence-backed semantic answers.",
+    }, "rules")
+
+
+def build_judge_prompt(case: dict[str, Any], assistant_answer: str, retrieved: list[dict[str, Any]]) -> str:
+    evidence_text = "\n\n".join(
+        f"[{i + 1}] chunk_id={item.get('chunk_id')} score={item.get('score')}\n{item.get('preview')}"
+        for i, item in enumerate(retrieved)
+    )
+    return f"""你是 RAG 问答系统的评测员。请只基于给定的标准答案、rubric 和检索证据，评估模型回答。
+
+输出必须是严格 JSON，不要 Markdown，不要解释性前后缀。JSON 字段：
+{{
+  "answer_score": 1 | 0.5 | 0,
+  "hallucination_type": "none" | "unsupported" | "contradiction" | "wrong_source" | "overclaim",
+  "needs_human_review": true | false,
+  "confidence": 0.0-1.0,
+  "reason": "一句话说明"
+}}
+
+评分规则：
+- 1：关键事实完整正确，且能被证据或标准答案支持。
+- 0.5：主干正确但遗漏关键点，或有轻微不准确。
+- 0：错误、答非所问、不该拒答却拒答、该拒答却编造。
+- hallucination_type 不是 none 时，说明回答包含证据无法支持、与证据矛盾、来源张冠李戴或过度断言的内容。
+- 对 expected_behavior=refuse_or_say_unknown 的题，如果知识库无依据但模型编造答案，answer_score=0 且 hallucination_type=unsupported。
+
+题目 ID：{case.get('id')}
+问题：{case.get('question')}
+题目类型：{case.get('question_type')}
+期望行为：{case.get('expected_behavior')}
+
+标准答案：
+{case.get('gold_answer')}
+
+Rubric：
+full_credit: {(case.get('answer_rubric') or {}).get('full_credit')}
+partial_credit: {(case.get('answer_rubric') or {}).get('partial_credit')}
+fail: {(case.get('answer_rubric') or {}).get('fail')}
+
+检索证据预览：
+{evidence_text or "无检索证据"}
+
+模型回答：
+{assistant_answer}
+"""
+
+
+def llm_judge_answer(case: dict[str, Any], assistant_answer: str, retrieved: list[dict[str, Any]]) -> dict[str, Any]:
+    from services.claude_service import LLMService
+
+    llm = LLMService()
+    if not llm.client:
+        raise RuntimeError("No LLM client configured. Check MODEL_PROVIDERS or LLM_API_KEY.")
+    messages = [
+        {"role": "system", "content": "你是严格的 RAG 评测员，只输出 JSON。"},
+        {"role": "user", "content": build_judge_prompt(case, assistant_answer, retrieved)},
+    ]
+    last_error = None
+    for _ in range(2):
+        raw = llm._call(messages, max_tokens=1200)
+        try:
+            return normalize_grade(str(case["id"]), extract_json_object(raw), "llm")
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"LLM judge returned non-JSON output: {last_error}")
+
+
+def should_include_badcase(case_result: dict[str, Any], ks: tuple[int, ...]) -> tuple[bool, list[str]]:
+    reasons = []
+    metrics = case_result.get("retrieval_metrics") or {}
+    if metrics.get("must_hit"):
+        largest_k = max(ks)
+        if not metrics.get(f"accepted_hit_at_{largest_k}"):
+            reasons.append(f"retrieval_miss_at_{largest_k}")
+        elif not metrics.get("accepted_hit_at_3"):
+            reasons.append("retrieval_not_in_top3")
+        elif not metrics.get("accepted_hit_at_1"):
+            reasons.append("retrieval_not_top1")
+
+    if case_result.get("generation_error"):
+        reasons.append("generation_error")
+
+    grade = case_result.get("grade") or {}
+    if grade:
+        score = float(grade.get("answer_score", 0.0) or 0.0)
+        hallucination_type = str(grade.get("hallucination_type", "none") or "none")
+        confidence = float(grade.get("confidence", 1.0) or 0.0)
+        if score < 1.0:
+            reasons.append("answer_not_full_credit")
+        if hallucination_type not in ("none", "no"):
+            reasons.append(f"hallucination_{hallucination_type}")
+        if grade.get("needs_human_review") or confidence < 0.7:
+            reasons.append("needs_human_review")
+
+    return bool(reasons), reasons
+
+
+def build_badcases(case_results: list[dict[str, Any]], ks: tuple[int, ...]) -> list[dict[str, Any]]:
+    badcases = []
+    for item in case_results:
+        include, reasons = should_include_badcase(item, ks)
+        if not include:
+            continue
+        badcases.append({
+            "id": item["id"],
+            "question": item["question"],
+            "expected_behavior": item.get("expected_behavior"),
+            "reasons": reasons,
+            "retrieval_metrics": item.get("retrieval_metrics"),
+            "evidence": item.get("evidence", []),
+            "retrieved": item.get("retrieved", [])[:8],
+            "gold_answer": item.get("gold_answer"),
+            "assistant_answer": item.get("assistant_answer"),
+            "grade": item.get("grade"),
+        })
+    return badcases
 
 
 def resolve_case_doc_id(case: dict[str, Any], args: argparse.Namespace) -> int | None:
@@ -263,7 +473,8 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
     dataset = load_jsonl(args.dataset)
     if args.limit:
         dataset = dataset[: args.limit]
-    grades = load_grades(args.grades)
+    manual_grades = load_grades(args.grades)
+    auto_grades: dict[str, dict[str, Any]] = {}
 
     case_results = []
     for index, case in enumerate(dataset, start=1):
@@ -290,7 +501,26 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
             except Exception as exc:
                 generation_error = str(exc)
 
-        grade = grades.get(case["id"])
+        auto_grade = None
+        if args.judge != "none":
+            if args.judge in ("rules", "rules-llm"):
+                auto_grade = rule_judge_answer(case, assistant_answer, generation_error)
+            if args.judge in ("llm", "rules-llm") and assistant_answer and not generation_error:
+                try:
+                    auto_grade = llm_judge_answer(
+                        case,
+                        assistant_answer,
+                        [compact_result(item) for item in raw_results],
+                    )
+                except Exception as exc:
+                    fallback = auto_grade or rule_judge_answer(case, assistant_answer, generation_error)
+                    fallback["needs_human_review"] = True
+                    fallback["reason"] = f"{fallback.get('reason', '')} LLM judge failed: {exc}".strip()
+                    auto_grade = fallback
+            if auto_grade:
+                auto_grades[case["id"]] = auto_grade
+
+        grade = manual_grades.get(case["id"]) or auto_grade
         case_results.append({
             "id": case["id"],
             "question": case["question"],
@@ -308,7 +538,8 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
         })
 
     retrieval_summary = summarize_retrieval(case_results, args.ks)
-    grade_summary = summarize_grades(case_results, grades)
+    effective_grades = manual_grades or auto_grades
+    grade_summary = summarize_grades(case_results, effective_grades)
     summary = {
         "run_at": datetime.now().isoformat(timespec="seconds"),
         "dataset": str(args.dataset),
@@ -320,12 +551,15 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
         "score_threshold": args.threshold,
         "ks": list(args.ks),
         "generated_answers": bool(args.generate),
+        "judge": args.judge,
         "retrieval": retrieval_summary,
         "answers": grade_summary,
     }
     return {
         "summary": summary,
         "cases": case_results,
+        "auto_grades": list(auto_grades.values()),
+        "badcases": build_badcases(case_results, args.ks),
     }
 
 
@@ -355,10 +589,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--scope-mode",
         choices=("evidence_doc", "all"),
-        default="evidence_doc",
+        default="all",
         help=(
-            "evidence_doc mirrors the app's single-document QA by searching the first "
-            "evidence doc for each case. all searches the user's whole knowledge base."
+            "all searches the user's whole knowledge base. evidence_doc mirrors "
+            "single-document QA by searching the first evidence doc for each case."
         ),
     )
     parser.add_argument("--top-k", type=int, default=8)
@@ -366,6 +600,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ks", type=parse_ks, default=(3, 8), help="Comma-separated K values, e.g. 3,8.")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--generate", action="store_true", help="Call configured LLM to generate answers.")
+    parser.add_argument(
+        "--judge",
+        choices=("none", "rules", "llm", "rules-llm"),
+        default="none",
+        help="Automatically grade generated answers. llm and rules-llm require --generate.",
+    )
+    parser.add_argument("--grades-output", type=Path, default=None, help="Optional JSONL auto-grade output path.")
+    parser.add_argument("--badcases-output", type=Path, default=None, help="Optional JSONL badcase output path.")
     return parser
 
 
@@ -381,12 +623,26 @@ def main() -> int:
     cases_output = args.cases_output or DEFAULT_OUTPUT_DIR / f"rag_eval_cases_{timestamp}.jsonl"
     write_json(output, payload)
     write_jsonl(cases_output, payload["cases"])
+    if args.grades_output or payload.get("auto_grades"):
+        grades_output = args.grades_output or DEFAULT_OUTPUT_DIR / f"rag_eval_auto_grades_{timestamp}.jsonl"
+        write_jsonl(grades_output, payload.get("auto_grades", []))
+    else:
+        grades_output = None
+    if args.badcases_output or payload.get("badcases"):
+        badcases_output = args.badcases_output or DEFAULT_OUTPUT_DIR / f"rag_eval_badcases_{timestamp}.jsonl"
+        write_jsonl(badcases_output, payload.get("badcases", []))
+    else:
+        badcases_output = None
 
     summary = payload["summary"]
     print("\n=== Summary ===")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     print(f"\nWrote summary: {output}")
     print(f"Wrote cases:   {cases_output}")
+    if grades_output:
+        print(f"Wrote grades:  {grades_output}")
+    if badcases_output:
+        print(f"Wrote badcases:{badcases_output}")
     if not summary["answers"]:
         print("\nAnswer accuracy and hallucination rate require --grades.")
         print("Grade JSONL rows: {\"id\":\"rag_001\",\"answer_score\":1,\"hallucination_type\":\"none\"}")

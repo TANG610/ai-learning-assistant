@@ -33,7 +33,7 @@ logs/
 
 # embedding models
 embedding_model/
-models/
+/models/
 *.safetensors
 
 # evaluation outputs
