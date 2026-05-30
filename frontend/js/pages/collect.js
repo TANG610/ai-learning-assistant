@@ -413,7 +413,10 @@ async function loadServiceStatus() {
 
       const svcStatus = await api.get('/collector/service/status');
 
-      if (svcStatus.error) {
+      if (svcStatus.disabled) {
+        badge.innerHTML = '<span style="width:8px;height:8px;border-radius:50%;background:#f59e0b;display:inline-block"></span> Temporarily disabled';
+        badge.style.background = '#fffbeb';
+      } else if (svcStatus.error) {
 
         badge.innerHTML = '<span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block"></span> 服务未运行';
 
@@ -905,6 +908,11 @@ async function handleCollectAll() {
   try {
 
     const result = await api.post('/collector/crawl/collect-all');
+    if (result.error) {
+      statusBar.classList.add('hidden');
+      showToast('采集已暂时关闭: ' + result.error, 'warning');
+      return;
+    }
 
     if (result.status === 'completed' && result.total === 0) {
 

@@ -3,17 +3,21 @@ API 路由 - 对话问答（含 SSE 流式输出）
 """
 import json
 from flask import Blueprint, request, jsonify, Response, stream_with_context, g
+import config
 from services.claude_service import LLMService
 from services.document_service import DocumentService
+from services.rag_chain_service import RagChainService
 from models.database import (
     ConversationDAO, ProgressDAO, KnowledgeDAO, StudySessionDAO, DocumentDAO, get_db
 )
 from backend.middleware.auth import require_auth
+from backend.utils.logger import log
 
 chat_bp = Blueprint("chat", __name__)
 llm_service = LLMService()
-RAG_SCORE_THRESHOLD = 0.3
-RAG_TOP_K = 8
+rag_chain_service = RagChainService(llm_service)
+RAG_SCORE_THRESHOLD = config.RAG_SCORE_THRESHOLD
+RAG_TOP_K = config.RAG_TOP_K
 
 
 def _normalize_document_id(value):
@@ -25,6 +29,10 @@ def _normalize_document_id(value):
     except (TypeError, ValueError):
         return None
     return doc_id if doc_id > 0 else None
+
+
+def _normalize_rag_engine(value):
+    return "legacy" if str(value or "").lower() == "legacy" else "langchain"
 
 
 @chat_bp.route("/api/conversations", methods=["GET"])
@@ -79,11 +87,28 @@ def send_message(conv_id):
     user_message = data["message"]
     document_id = _normalize_document_id(data.get("document_id"))
     use_stream = data.get("stream", False)
+    rag_engine = _normalize_rag_engine(data.get("rag_engine") or config.RAG_ENGINE)
     conversation = ConversationDAO.get_by_id(conv_id, user_id=g.user_id)
     if not conversation:
         return jsonify({"error": "对话不存在"}), 404
 
     # RAG 检索
+    if rag_engine == "langchain":
+        if use_stream:
+            return _langchain_stream_response(conv_id, user_message, document_id)
+        try:
+            result = rag_chain_service.answer(conv_id, user_message, document_id, user_id=g.user_id)
+            _record_qa_progress(document_id)
+            return jsonify(result)
+        except Exception as e:
+            log.warning(f"LangChain RAG failed; falling back to legacy RAG: {e}", exc_info=True)
+            context_chunks, sources_meta, retrieval_debug = _build_legacy_rag_context(
+                user_message,
+                document_id,
+                fallback_reason=str(e),
+            )
+            return _normal_response(conv_id, user_message, document_id, context_chunks, sources_meta, retrieval_debug)
+
     context_chunks = []
     sources_meta = []
     retrieval_debug = {
@@ -92,6 +117,7 @@ def send_message(conv_id):
         "search_scope": "all_documents" if document_id is None else "single_document",
         "top_k": RAG_TOP_K,
         "score_threshold": RAG_SCORE_THRESHOLD,
+        "rag_engine": "legacy",
         "results": [],
         "accepted_count": 0,
     }
@@ -145,14 +171,70 @@ def _get_doc_name(doc_id):
         return f"文档{doc_id}"
 
 
-def _normal_response(conv_id, user_message, document_id, context_chunks, sources_meta, retrieval_debug):
-    """非流式响应"""
-    reply = llm_service.chat(conv_id, user_message, context_chunks, user_id=g.user_id)
+def _source_from_search_result(rank, item):
+    score = item.get("score", 0)
+    accepted = score > RAG_SCORE_THRESHOLD
+    return {
+        "rank": rank,
+        "doc_id": item.get("doc_id"),
+        "doc_name": _get_doc_name(item.get("doc_id")),
+        "chunk_index": item.get("chunk_index"),
+        "score": score,
+        "rerank_score": item.get("rerank_score", score),
+        "vector_score": item.get("vector_score"),
+        "keyword_score": item.get("keyword_score"),
+        "bm25_score": item.get("bm25_score"),
+        "retrieval_sources": item.get("retrieval_sources", []),
+        "matched_terms": item.get("matched_terms", []),
+        "distance": item.get("distance"),
+        "accepted": accepted,
+        "reason": "sent_to_llm" if accepted else "below_threshold",
+        "char_count": len(item.get("text") or ""),
+        "preview": (item.get("text") or "")[:180].replace("\n", " "),
+        "content": item.get("text") or "",
+    }
 
+
+def _build_legacy_rag_context(user_message, document_id, fallback_reason=None):
+    context_chunks = []
+    sources_meta = []
+    retrieval_debug = {
+        "query": user_message,
+        "document_id": document_id,
+        "search_scope": "all_documents" if document_id is None else "single_document",
+        "top_k": RAG_TOP_K,
+        "score_threshold": RAG_SCORE_THRESHOLD,
+        "rag_engine": "legacy",
+        "results": [],
+        "accepted_count": 0,
+    }
+    if fallback_reason:
+        retrieval_debug["fallback_reason"] = fallback_reason
+
+    search_results = DocumentService.search_documents(user_message, document_id, top_k=RAG_TOP_K, user_id=g.user_id)
+    for rank, item in enumerate(search_results, start=1):
+        source = _source_from_search_result(rank, item)
+        retrieval_debug["results"].append(source)
+        if source["accepted"]:
+            context_chunks.append(item["text"])
+            sources_meta.append(source)
+
+    retrieval_debug["accepted_count"] = len(sources_meta)
+    return context_chunks, sources_meta, retrieval_debug
+
+
+def _record_qa_progress(document_id):
     if document_id:
         ProgressDAO.update(document_id, status="in_progress")
         ProgressDAO.record_question(document_id)
         StudySessionDAO.create(document_id, session_type="qa", questions=1, user_id=g.user_id)
+
+
+def _normal_response(conv_id, user_message, document_id, context_chunks, sources_meta, retrieval_debug):
+    """非流式响应"""
+    reply = llm_service.chat(conv_id, user_message, context_chunks, user_id=g.user_id)
+
+    _record_qa_progress(document_id)
 
     return jsonify({
         "reply": reply,
@@ -160,6 +242,36 @@ def _normal_response(conv_id, user_message, document_id, context_chunks, sources
         "source_count": len(sources_meta),
         "retrieval_debug": retrieval_debug
     })
+
+
+def _langchain_stream_response(conv_id, user_message, document_id):
+    """SSE response for LangChain RAG, with legacy fallback before/inside streaming."""
+    def generate():
+        try:
+            for event in rag_chain_service.answer_stream(conv_id, user_message, document_id, user_id=g.user_id):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            _record_qa_progress(document_id)
+        except Exception as e:
+            log.warning(f"LangChain streaming RAG failed; falling back to legacy RAG: {e}", exc_info=True)
+            context_chunks, sources_meta, retrieval_debug = _build_legacy_rag_context(
+                user_message,
+                document_id,
+                fallback_reason=str(e),
+            )
+            for chunk in llm_service.chat_stream(conv_id, user_message, context_chunks, user_id=g.user_id):
+                yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'sources': sources_meta, 'retrieval_debug': retrieval_debug}, ensure_ascii=False)}\n\n"
+            _record_qa_progress(document_id)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 def _stream_response(conv_id, user_message, document_id, context_chunks, sources_meta, retrieval_debug):
@@ -176,10 +288,7 @@ def _stream_response(conv_id, user_message, document_id, context_chunks, sources
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
 
         # 更新进度
-        if document_id:
-            ProgressDAO.update(document_id, status="in_progress")
-            ProgressDAO.record_question(document_id)
-            StudySessionDAO.create(document_id, session_type="qa", questions=1, user_id=g.user_id)
+        _record_qa_progress(document_id)
 
     return Response(
         stream_with_context(generate()),

@@ -154,14 +154,19 @@ class DocumentService:
             if progress_callback:
                 progress_callback(f"正在向量化 {len(chunks)} 个文本块...", 65)
             user_id = doc.get("user_id")
-            vector_store = VectorStore()
             conn = get_db()
             DocumentService._delete_keyword_index_for_document(conn, doc_id)
             conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (doc_id,))
             conn.commit()
             conn.close()
-            vector_store.delete_document(doc_id, user_id=user_id)
-            vector_ids = vector_store.add_chunks(doc_id, chunks, user_id=user_id)
+            embedding_values = []
+            if config.VECTOR_INDEX_ENABLED:
+                vector_store = VectorStore()
+                vector_store.delete_document(doc_id, user_id=user_id)
+                vector_ids = vector_store.add_chunks(doc_id, chunks, user_id=user_id)
+                embedding_values = getattr(vector_store, "last_embeddings", []) or []
+            else:
+                vector_ids = []
 
             # 4. 存入SQLite
             if progress_callback:
@@ -169,12 +174,30 @@ class DocumentService:
             conn = get_db()
             for i, chunk in enumerate(chunks):
                 vid = vector_ids[i] if i < len(vector_ids) else None
-                conn.execute(
-                    "INSERT INTO document_chunks (document_id, chunk_index, content, vector_id, user_id) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (doc_id, i, chunk, vid, user_id)
-                )
+                embedding = embedding_values[i] if i < len(embedding_values) else None
+                if config.VECTOR_BACKEND == "pgvector" and embedding:
+                    conn.execute(
+                        "INSERT INTO document_chunks "
+                        "(document_id, chunk_index, content, vector_id, embedding, embedding_model, user_id) "
+                        "VALUES (?, ?, ?, ?, ?::vector, ?, ?)",
+                        (
+                            doc_id, i, chunk, vid,
+                            DocumentService._vector_literal(embedding),
+                            config.EMBEDDING_API_MODEL,
+                            user_id,
+                        )
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO document_chunks (document_id, chunk_index, content, vector_id, user_id) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (doc_id, i, chunk, vid, user_id)
+                    )
             DocumentService._replace_keyword_index_for_document(conn, doc_id)
+            conn.execute(
+                "UPDATE documents SET raw_text = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+                (text, doc_id)
+            )
             # 保存 OCR 文本（多模态文件）
             if file_category == "multimodal":
                 conn.execute(
@@ -262,8 +285,9 @@ class DocumentService:
 
         # 删除向量数据
         user_id = doc.get("user_id")
-        vector_store = VectorStore()
-        vector_store.delete_document(doc_id, user_id=user_id)
+        if config.VECTOR_INDEX_ENABLED:
+            vector_store = VectorStore()
+            vector_store.delete_document(doc_id, user_id=user_id)
 
         try:
             conn = get_db()
@@ -315,6 +339,8 @@ class DocumentService:
 
     @staticmethod
     def _safe_vector_search(query: str, doc_id: int = None, top_k: int = 5, user_id: int = None) -> list:
+        if not config.VECTOR_INDEX_ENABLED:
+            return []
         try:
             vector_store = VectorStore()
             return vector_store.search(query, doc_id, top_k, user_id=user_id)
@@ -342,6 +368,9 @@ class DocumentService:
         user_id: int = None,
         tokens: List[str] = None,
     ) -> list:
+        if config.DB_BACKEND == "postgres":
+            return []
+
         tokens = tokens or DocumentService._tokenize_for_retrieval(query)
         if not tokens:
             return []
@@ -472,6 +501,9 @@ class DocumentService:
 
     @staticmethod
     def _ensure_keyword_index(conn):
+        if config.DB_BACKEND == "postgres":
+            return
+
         if DocumentService._keyword_index_checked:
             return
         if not DocumentService._fts_table_exists(conn):
@@ -486,6 +518,9 @@ class DocumentService:
 
     @staticmethod
     def _fts_table_exists(conn) -> bool:
+        if config.DB_BACKEND == "postgres":
+            return False
+
         row = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'document_chunks_fts'"
         ).fetchone()
@@ -722,3 +757,7 @@ class DocumentService:
     @staticmethod
     def _escape_like_token(token: str) -> str:
         return token.replace("%", "\\%").replace("_", "\\_")
+
+    @staticmethod
+    def _vector_literal(values: list) -> str:
+        return "[" + ",".join(str(float(value)) for value in values) + "]"

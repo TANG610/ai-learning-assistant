@@ -30,12 +30,13 @@ def test_provider_uses_baidu_when_keys_exist(monkeypatch):
     assert ts.TranscriptionService._get_provider() == "baidu"
 
 
-def test_provider_allows_explicit_whisper(monkeypatch):
+def test_provider_disables_explicit_whisper_by_default(monkeypatch):
     monkeypatch.setattr(ts, "ASR_PROVIDER", "whisper")
+    monkeypatch.setattr(ts, "LOCAL_WHISPER_ASR_ENABLED", False)
     monkeypatch.setattr(ts, "BAIDU_ASR_API_KEY", "api-key")
     monkeypatch.setattr(ts, "BAIDU_ASR_SECRET_KEY", "secret-key")
 
-    assert ts.TranscriptionService._get_provider() == "whisper"
+    assert ts.TranscriptionService._get_provider() == "disabled"
 
 
 def test_iter_pcm_chunks_splits_16k_mono_wav(tmp_path, monkeypatch):

@@ -127,6 +127,8 @@ def start_crawl():
         # 仅启动采集，不自动导入
         result = CollectorService.start_crawl(source_id, user_id=g.user_id)
 
+    if result.get("disabled"):
+        return jsonify(result)
     if result.get("error"):
         return jsonify(result), 500
 
@@ -174,6 +176,8 @@ def import_crawl_data():
 def collect_all():
     """一键采集所有活跃源"""
     result = CollectorService.collect_all_active(user_id=g.user_id)
+    if result.get("disabled"):
+        return jsonify(result)
     return jsonify(result)
 
 

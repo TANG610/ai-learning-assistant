@@ -3,14 +3,108 @@ SQLite 数据模型与初始化
 """
 import sqlite3
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 import config
 from backend.utils.logger import log
 
 
+class CompatRow(dict):
+    def __init__(self, keys, values):
+        super().__init__(zip(keys, values))
+        self._values = list(values)
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values[key]
+        return super().__getitem__(key)
+
+
+class PostgresCursor:
+    def __init__(self, cursor, lastrowid=None):
+        self._cursor = cursor
+        self.lastrowid = lastrowid
+
+    def fetchone(self):
+        row = self._cursor.fetchone()
+        return self._wrap(row) if row is not None else None
+
+    def fetchall(self):
+        return [self._wrap(row) for row in self._cursor.fetchall()]
+
+    def _wrap(self, row):
+        keys = [desc.name for desc in self._cursor.description] if self._cursor.description else []
+        return CompatRow(keys, row)
+
+
+class PostgresConnection:
+    def __init__(self):
+        import psycopg
+
+        kwargs = {}
+        if config.DB_SSLMODE and "sslmode=" not in config.DATABASE_URL:
+            kwargs["sslmode"] = config.DB_SSLMODE
+        self._conn = psycopg.connect(config.DATABASE_URL, prepare_threshold=None, **kwargs)
+
+    def execute(self, sql, params=None):
+        translated = _translate_postgres_sql(sql)
+        translated, returns_id = _add_postgres_returning_id(translated)
+        cur = self._conn.execute(translated, params or ())
+        lastrowid = None
+        if returns_id:
+            row = cur.fetchone()
+            lastrowid = row[0] if row else None
+        return PostgresCursor(cur, lastrowid=lastrowid)
+
+    def executescript(self, script):
+        with self._conn.cursor() as cur:
+            for stmt in script.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    cur.execute(stmt)
+
+    def cursor(self):
+        return self
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        self._conn.close()
+
+
+def _translate_postgres_sql(sql: str) -> str:
+    original = sql.strip()
+    translated = re.sub(r"INSERT\s+OR\s+IGNORE\s+INTO", "INSERT INTO", original, flags=re.IGNORECASE)
+    translated = re.sub(
+        r"datetime\('now'\s*,\s*'localtime'\s*,\s*\?\)",
+        "(CURRENT_TIMESTAMP + %s::interval)",
+        translated,
+        flags=re.IGNORECASE,
+    )
+    translated = re.sub(r"datetime\('now'\s*,\s*'localtime'\)", "CURRENT_TIMESTAMP", translated, flags=re.IGNORECASE)
+    translated = translated.replace("?", "%s")
+    if "INSERT OR IGNORE" in original.upper() and "ON CONFLICT" not in translated.upper():
+        translated += " ON CONFLICT DO NOTHING"
+    return translated
+
+
+def _add_postgres_returning_id(sql: str) -> tuple[str, bool]:
+    upper = sql.upper()
+    if not upper.startswith("INSERT INTO") or " RETURNING " in upper:
+        return sql, False
+    table_match = re.match(r"INSERT\s+INTO\s+([a-zA-Z_][a-zA-Z0-9_]*)", sql, re.IGNORECASE)
+    if table_match and table_match.group(1).lower() in {"collector_tasks"}:
+        return sql, False
+    return f"{sql} RETURNING id", True
+
+
 def get_db():
     """获取数据库连接"""
+    if config.DB_BACKEND == "postgres":
+        return PostgresConnection()
+
     conn = sqlite3.connect(str(config.DATABASE_PATH))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -26,6 +120,9 @@ def _column_exists(conn, table_name, column_name):
 
 def run_migrations():
     """执行数据库迁移"""
+    if config.DB_BACKEND == "postgres":
+        return
+
     migration_dir = config.BASE_DIR / "backend" / "migrations"
     if not migration_dir.exists():
         return
@@ -61,6 +158,10 @@ def run_migrations():
 
 def init_db():
     """初始化数据库表结构"""
+    if config.DB_BACKEND == "postgres":
+        init_postgres_db()
+        return
+
     conn = get_db()
     cursor = conn.cursor()
 
@@ -76,6 +177,7 @@ def init_db():
             status TEXT DEFAULT 'uploaded',
             file_category TEXT DEFAULT 'text',
             ocr_text TEXT DEFAULT NULL,
+            raw_text TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now', 'localtime')),
             updated_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
@@ -365,6 +467,21 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def init_postgres_db():
+    migration = config.BASE_DIR / "backend" / "migrations_postgres" / "001_init.sql"
+    sql = migration.read_text(encoding="utf-8").replace(
+        "{{EMBEDDING_DIMENSION}}",
+        str(config.EMBEDDING_DIMENSION),
+    )
+    conn = get_db()
+    try:
+        conn.executescript(sql)
+        conn.commit()
+        log.info("PostgreSQL schema initialized")
+    finally:
+        conn.close()
 
 
 # ============ 数据操作层 ============

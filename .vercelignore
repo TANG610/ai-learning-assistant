@@ -1,0 +1,15 @@
+/.git
+/.pytest_cache
+/.workbuddy
+__pycache__
+/data
+/embedding_model
+/eval
+/logs
+/models
+/scripts
+/specs
+/tests
+*.db
+*.log
+.env

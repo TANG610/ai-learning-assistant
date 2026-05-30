@@ -1,0 +1,1 @@
+ALTER TABLE documents ADD COLUMN raw_text TEXT DEFAULT '';

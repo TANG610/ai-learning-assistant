@@ -45,6 +45,7 @@ def test_import_from_crawl_persists_raw_then_imports(monkeypatch, test_db):
         get_db,
     )
     from backend.services.collector_service import CollectorService, _collect_tasks
+    monkeypatch.setattr("backend.services.collector_service.MEDIACRAWLER_ENABLED", True)
 
     conn = get_db()
     cursor = conn.execute(
@@ -150,3 +151,34 @@ def test_import_from_crawl_persists_raw_then_imports(monkeypatch, test_db):
     article = NewsDAO.get_by_url("https://example.test/a1", user_id=user_id)
     assert article is not None
     assert article["document_id"] is not None
+
+
+def test_mediacrawler_collect_all_disabled(monkeypatch, test_db):
+    from backend.models.database import MediaSourceDAO, get_db
+    from backend.services.collector_service import CollectorService
+
+    monkeypatch.setattr("backend.services.collector_service.MEDIACRAWLER_ENABLED", False)
+
+    conn = get_db()
+    cursor = conn.execute(
+        "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+        ("disabled_user", "disabled@example.test", "hash"),
+    )
+    user_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    MediaSourceDAO.create(
+        user_id=user_id,
+        name="disabled source",
+        platform="douyin",
+        crawler_type="search",
+        keywords="AI",
+        max_results=1,
+    )
+
+    result = CollectorService.collect_all_active(user_id=user_id)
+
+    assert result["status"] == "disabled"
+    assert result["disabled"] is True
+    assert result["tasks"] == []

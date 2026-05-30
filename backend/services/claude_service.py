@@ -174,6 +174,8 @@ class LLMService:
         import httpx
         model = self._resolve_model()
         client = self.client
+        if client is None:
+            raise RuntimeError("LLM API key is not configured")
         tokens = max_tokens or self.max_tokens
         last_err = None
         for attempt in range(1, retries + 1):
@@ -260,6 +262,8 @@ class LLMService:
 
         full_reply = ""
         try:
+            if self.client is None:
+                raise RuntimeError("LLM API key is not configured")
             response = self.client.chat.completions.create(
                 model=self._resolve_model(),
                 max_tokens=self.max_tokens,

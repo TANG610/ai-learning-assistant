@@ -5,6 +5,7 @@ __pycache__/
 *.so
 venv/
 .env
+.vercel/
 
 # 数据
 data/uploads/*
@@ -45,3 +46,5 @@ chemai.db
 
 
 .workbuddy/
+
+.vercel

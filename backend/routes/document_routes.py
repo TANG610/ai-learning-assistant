@@ -5,6 +5,7 @@ import os
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from flask import Blueprint, request, jsonify, g
+import config
 from services.document_service import DocumentService
 from models.database import DocumentDAO, get_db
 from backend.middleware.auth import require_auth
@@ -95,10 +96,13 @@ def upload_document():
         file_path, file_type, file_size = DocumentService.save_upload(file, file.filename, user_id=g.user_id)
         doc_id = DocumentDAO.create(file.filename, file_type, file_path, file_size, user_id=g.user_id, file_category=file_category)
 
-        # 异步处理文档（后台线程）
+        # Vercel functions may stop background threads after the response.
         DocumentDAO.update_status(doc_id, "processing")
         _doc_progress[doc_id] = {"status": "processing", "stage": "parsing", "stage_label": "正在解析文档...", "progress_pct": 10}
-        executor.submit(_process_in_background, doc_id)
+        if config.IS_VERCEL:
+            _process_in_background(doc_id)
+        else:
+            executor.submit(_process_in_background, doc_id)
 
         return jsonify({
             "id": doc_id,

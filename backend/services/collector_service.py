@@ -33,6 +33,13 @@ from backend.utils.logger import log
 
 # MediaCrawler API 地址
 MEDIACRAWLER_BASE = os.getenv("MEDIACRAWLER_URL", "http://localhost:8080")
+MEDIACRAWLER_ENABLED = os.getenv("MEDIACRAWLER_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+MEDIACRAWLER_DISABLED_MESSAGE = "MediaCrawler is temporarily disabled."
 MEDIACRAWLER_TIMEOUT = int(os.getenv("MEDIACRAWLER_TIMEOUT", "300"))  # 爬虫启动超时(秒)
 MIN_VIDEO_TRANSCRIPT_CHARS = int(os.getenv("MIN_VIDEO_TRANSCRIPT_CHARS", "30"))
 MEDIACRAWLER_VIDEO_WAIT_SECONDS = int(os.getenv("MEDIACRAWLER_VIDEO_WAIT_SECONDS", "600"))
@@ -142,6 +149,13 @@ class CollectorService:
     @staticmethod
     def _call_crawler_api(method: str, endpoint: str, json_data: dict = None) -> dict:
         """调用 MediaCrawler API 通用方法"""
+        if not MEDIACRAWLER_ENABLED:
+            return {
+                "status": "disabled",
+                "disabled": True,
+                "error": MEDIACRAWLER_DISABLED_MESSAGE,
+            }
+
         url = f"{MEDIACRAWLER_BASE}{endpoint}"
         try:
             if method.upper() == "GET":
@@ -162,6 +176,12 @@ class CollectorService:
     @staticmethod
     def get_crawler_status() -> dict:
         """查询 MediaCrawler 服务状态"""
+        if not MEDIACRAWLER_ENABLED:
+            return {
+                "status": "disabled",
+                "disabled": True,
+                "message": MEDIACRAWLER_DISABLED_MESSAGE,
+            }
         return CollectorService._call_crawler_api("GET", "/api/crawler/status")
 
     @staticmethod
@@ -239,6 +259,13 @@ class CollectorService:
         source = MediaSourceDAO.get_by_id(source_id)
         if not source:
             return {"error": "采集源不存在"}
+
+        if not MEDIACRAWLER_ENABLED:
+            return {
+                "status": "disabled",
+                "disabled": True,
+                "error": MEDIACRAWLER_DISABLED_MESSAGE,
+            }
 
         platform = source["platform"]
         crawler_type = source["crawler_type"]
@@ -429,6 +456,13 @@ class CollectorService:
             return {"error": "采集任务不存在"}
 
         source_id = task["source_id"]
+        if not MEDIACRAWLER_ENABLED:
+            return {
+                "status": "disabled",
+                "disabled": True,
+                "error": MEDIACRAWLER_DISABLED_MESSAGE,
+            }
+
         source = MediaSourceDAO.get_by_id(source_id)
         if not source:
             return {"error": "采集源不存在"}
@@ -1115,6 +1149,13 @@ class CollectorService:
         状态通过 get_collect_status(task_id) 查询。
         """
         # 先启动采集
+        if not MEDIACRAWLER_ENABLED:
+            return {
+                "status": "disabled",
+                "disabled": True,
+                "error": MEDIACRAWLER_DISABLED_MESSAGE,
+            }
+
         start_result = CollectorService.start_crawl(source_id, user_id=user_id)
         if start_result.get("error"):
             return start_result
@@ -1176,6 +1217,15 @@ class CollectorService:
         Returns:
             {"status": "started", "sources": [...], "total": int}
         """
+        if not MEDIACRAWLER_ENABLED:
+            return {
+                "status": "disabled",
+                "disabled": True,
+                "error": MEDIACRAWLER_DISABLED_MESSAGE,
+                "total": 0,
+                "tasks": [],
+            }
+
         sources = MediaSourceDAO.get_active(user_id=user_id)
         if not sources:
             return {"status": "completed", "message": "没有活跃的采集源", "total": 0}

@@ -3,14 +3,16 @@
 """
 import logging
 import logging.handlers
+import os
+import tempfile
 from pathlib import Path
 import config
 
 
 def setup_logging():
     """初始化全局日志配置"""
-    log_dir = config.BASE_DIR / "logs"
-    log_dir.mkdir(exist_ok=True)
+    log_dir = Path(tempfile.gettempdir()) / "ai-learning-assistant" / "logs" if os.getenv("VERCEL") else config.BASE_DIR / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
 

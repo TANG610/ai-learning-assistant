@@ -23,6 +23,11 @@ class VectorStore:
     _lock = threading.Lock()
 
     def __init__(self):
+        self.last_embeddings = []
+        if config.VECTOR_BACKEND == "pgvector":
+            self._pgvector = PgVectorStore()
+        else:
+            self._pgvector = None
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
@@ -88,6 +93,11 @@ class VectorStore:
 
     def add_chunks(self, doc_id: int, chunks: List[str], user_id: int = None) -> List[str]:
         """Add document chunks to the user's unified knowledge collection."""
+        if self._pgvector:
+            ids = self._pgvector.add_chunks(doc_id, chunks, user_id=user_id)
+            self.last_embeddings = self._pgvector.last_embeddings
+            return ids
+
         if not chunks:
             return []
 
@@ -119,6 +129,9 @@ class VectorStore:
 
     def search(self, query: str, doc_id: int = None, top_k: int = 5, user_id: int = None) -> List[dict]:
         """Semantic search in a single document or across the user's knowledge base."""
+        if self._pgvector:
+            return self._pgvector.search(query, doc_id, top_k, user_id=user_id)
+
         try:
             collection = self._get_client().get_collection(self._collection_name(user_id))
         except Exception:
@@ -147,6 +160,10 @@ class VectorStore:
         return self._enrich_results(results)
 
     def delete_document(self, doc_id: int, user_id: int = None):
+        if self._pgvector:
+            self._pgvector.delete_document(doc_id, user_id=user_id)
+            return
+
         try:
             collection = self._get_client().get_collection(self._collection_name(user_id))
             self._delete_doc_from_collection(collection, doc_id)
@@ -154,6 +171,9 @@ class VectorStore:
             pass
 
     def get_document_count(self, doc_id: int, user_id: int = None) -> int:
+        if self._pgvector:
+            return self._pgvector.get_document_count(doc_id, user_id=user_id)
+
         try:
             collection = self._get_client().get_collection(self._collection_name(user_id))
             result = collection.get(where={"doc_id": int(doc_id)}, include=[])
@@ -190,3 +210,106 @@ class VectorStore:
                 }
             )
         return enriched
+
+
+class PgVectorStore:
+    """pgvector-backed vector search using PostgreSQL document_chunks."""
+
+    def __init__(self):
+        self.last_embeddings = []
+
+    def add_chunks(self, doc_id: int, chunks: List[str], user_id: int = None) -> List[str]:
+        self.last_embeddings = self._embed(chunks)
+        return [f"doc_{doc_id}_chunk_{i}" for i in range(len(chunks))]
+
+    def search(self, query: str, doc_id: int = None, top_k: int = 5, user_id: int = None) -> List[dict]:
+        embeddings = self._embed([query])
+        if not embeddings:
+            return []
+
+        where = ["embedding IS NOT NULL"]
+        params = [_vector_literal(embeddings[0])]
+        if doc_id:
+            where.append("document_id = ?")
+            params.append(int(doc_id))
+        if user_id is not None:
+            where.append("user_id = ?")
+            params.append(int(user_id))
+
+        sql = (
+            "SELECT document_id, chunk_index, content, "
+            "embedding <=> ?::vector AS distance "
+            "FROM document_chunks "
+            "WHERE " + " AND ".join(where) + " "
+            "ORDER BY embedding <=> ?::vector "
+            "LIMIT ?"
+        )
+        params.append(_vector_literal(embeddings[0]))
+        params.append(max(1, int(top_k or 5)))
+
+        try:
+            from models.database import get_db
+
+            conn = get_db()
+            rows = conn.execute(sql, params).fetchall()
+            conn.close()
+        except BaseException as exc:
+            log.warning(f"[PgVectorStore] search failed: {exc}")
+            return []
+
+        results = []
+        for row in rows:
+            distance = float(row["distance"] or 0.0)
+            results.append({
+                "text": row["content"],
+                "score": round(1.0 - distance, 4),
+                "distance": round(distance, 4),
+                "doc_id": row["document_id"],
+                "chunk_index": row["chunk_index"],
+            })
+        return results
+
+    def delete_document(self, doc_id: int, user_id: int = None):
+        return
+
+    def get_document_count(self, doc_id: int, user_id: int = None) -> int:
+        try:
+            from models.database import get_db
+
+            conn = get_db()
+            row = conn.execute(
+                "SELECT COUNT(*) FROM document_chunks WHERE document_id = ? AND embedding IS NOT NULL",
+                (int(doc_id),),
+            ).fetchone()
+            conn.close()
+            return row[0] if row else 0
+        except BaseException:
+            return 0
+
+    def _embed(self, texts: List[str]) -> List[list[float]]:
+        if not texts:
+            return []
+        api_key = config.EMBEDDING_API_KEY or config.LLM_API_KEY
+        base_url = config.EMBEDDING_BASE_URL
+        model = config.EMBEDDING_API_MODEL
+        if not api_key:
+            log.warning("[PgVectorStore] embedding API key is not configured")
+            return []
+
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=api_key, base_url=base_url)
+            response = client.embeddings.create(
+                model=model,
+                input=texts,
+                dimensions=config.EMBEDDING_DIMENSION,
+            )
+            return [item.embedding for item in response.data]
+        except BaseException as exc:
+            log.warning(f"[PgVectorStore] embedding failed: {exc}")
+            return []
+
+
+def _vector_literal(values: list[float]) -> str:
+    return "[" + ",".join(str(float(value)) for value in values) + "]"

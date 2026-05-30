@@ -133,7 +133,7 @@ def test_chat_null_document_id_searches_all_documents(client, monkeypatch):
 
     response = client.post(
         f"/api/conversations/{conv_id}/messages",
-        json={"message": "search all", "document_id": None, "stream": False},
+        json={"message": "search all", "document_id": None, "stream": False, "rag_engine": "legacy"},
         headers=_auth_headers(user_id),
     )
 
@@ -144,3 +144,111 @@ def test_chat_null_document_id_searches_all_documents(client, monkeypatch):
     assert body["retrieval_debug"]["document_id"] is None
     assert body["source_count"] == 2
     assert {source["doc_id"] for source in body["sources"]} == {101, 102}
+
+
+def test_chat_langchain_engine_uses_rag_chain_service(client, monkeypatch):
+    import routes.chat_routes as chat_routes
+    from models.database import ConversationDAO
+
+    user_id = _create_user(51)
+    conv_id = ConversationDAO.create("LangChain", user_id=user_id)
+    calls = []
+
+    def fake_answer(conv_id_arg, message, document_id=None, user_id=None):
+        calls.append({
+            "conv_id": conv_id_arg,
+            "message": message,
+            "document_id": document_id,
+            "user_id": user_id,
+        })
+        return {
+            "reply": "langchain answer",
+            "sources": [{"doc_id": 99, "chunk_index": 0}],
+            "source_count": 1,
+            "retrieval_debug": {"rag_engine": "langchain", "accepted_count": 1},
+        }
+
+    monkeypatch.setattr(chat_routes.rag_chain_service, "answer", fake_answer)
+
+    response = client.post(
+        f"/api/conversations/{conv_id}/messages",
+        json={"message": "use lc", "document_id": None, "stream": False, "rag_engine": "langchain"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["reply"] == "langchain answer"
+    assert body["retrieval_debug"]["rag_engine"] == "langchain"
+    assert calls == [{"conv_id": conv_id, "message": "use lc", "document_id": None, "user_id": user_id}]
+
+
+def test_chat_langchain_failure_falls_back_to_legacy(client, monkeypatch):
+    import routes.chat_routes as chat_routes
+    from models.database import ConversationDAO
+
+    user_id = _create_user(52)
+    conv_id = ConversationDAO.create("Fallback", user_id=user_id)
+
+    monkeypatch.setattr(
+        chat_routes.rag_chain_service,
+        "answer",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("lc unavailable")),
+    )
+    monkeypatch.setattr(
+        chat_routes.DocumentService,
+        "search_documents",
+        staticmethod(lambda *args, **kwargs: [
+            {"text": "legacy chunk", "score": 0.9, "doc_id": 1, "chunk_index": 0}
+        ]),
+    )
+    monkeypatch.setattr(chat_routes.llm_service, "chat", lambda *args, **kwargs: "legacy answer")
+    monkeypatch.setattr(chat_routes, "_get_doc_name", lambda doc_id: f"doc-{doc_id}")
+
+    response = client.post(
+        f"/api/conversations/{conv_id}/messages",
+        json={"message": "fallback", "stream": False, "rag_engine": "langchain"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["reply"] == "legacy answer"
+    assert body["retrieval_debug"]["rag_engine"] == "legacy"
+    assert "lc unavailable" in body["retrieval_debug"]["fallback_reason"]
+
+
+def test_chat_langchain_stream_returns_done_event(client, monkeypatch):
+    import json
+    import routes.chat_routes as chat_routes
+    from models.database import ConversationDAO
+
+    user_id = _create_user(53)
+    conv_id = ConversationDAO.create("Stream", user_id=user_id)
+
+    def fake_answer_stream(*args, **kwargs):
+        yield {"chunk": "hello"}
+        yield {
+            "done": True,
+            "sources": [{"doc_id": 1}],
+            "retrieval_debug": {"rag_engine": "langchain"},
+        }
+
+    monkeypatch.setattr(chat_routes.rag_chain_service, "answer_stream", fake_answer_stream)
+
+    response = client.post(
+        f"/api/conversations/{conv_id}/messages",
+        json={"message": "stream", "stream": True, "rag_engine": "langchain"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.get_data(as_text=True)
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in payload.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert events[0] == {"chunk": "hello"}
+    assert events[-1]["done"] is True
+    assert events[-1]["retrieval_debug"]["rag_engine"] == "langchain"

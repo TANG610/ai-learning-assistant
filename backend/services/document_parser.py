@@ -2,9 +2,13 @@
 文档解析服务 - 支持 PDF/PPTX/DOCX/Markdown
 """
 import re
+import time
+import logging
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import config
+
+logger = logging.getLogger(__name__)
 
 
 def parse_document(file_path: str) -> Tuple[str, str]:
@@ -20,8 +24,10 @@ def parse_document(file_path: str) -> Tuple[str, str]:
     path = Path(file_path)
     suffix = path.suffix.lower()
 
+    if suffix == ".pdf":
+        return parse_pdf_document(str(path))
+
     parsers = {
-        ".pdf": parse_pdf,
         ".pptx": parse_pptx,
         ".ppt": parse_pptx,
         ".docx": parse_docx,
@@ -41,6 +47,24 @@ def parse_document(file_path: str) -> Tuple[str, str]:
 
 def parse_pdf(file_path: str) -> str:
     """解析PDF文件"""
+    text, _ = parse_pdf_document(file_path)
+    return text
+
+
+def parse_pdf_document(file_path: str) -> Tuple[str, str]:
+    """Parse PDF and return text plus the chunking-friendly content type."""
+    if getattr(config, "PDF_PARSER", "pymupdf") == "mineru":
+        try:
+            mineru_text = _parse_pdf_with_mineru(file_path)
+            if mineru_text and mineru_text.strip():
+                return mineru_text, "markdown"
+        except Exception as e:
+            logger.warning("MinerU PDF parsing failed, falling back to PyMuPDF: %s", e)
+
+    return _parse_pdf_with_pymupdf(file_path), "pdf"
+
+
+def _parse_pdf_with_pymupdf(file_path: str) -> str:
     import fitz  # PyMuPDF
     doc = fitz.open(file_path)
     texts = []
@@ -50,6 +74,109 @@ def parse_pdf(file_path: str) -> str:
             texts.append(text.strip())
     doc.close()
     return "\n\n".join(texts)
+
+
+def _parse_pdf_with_mineru(file_path: str) -> Optional[str]:
+    import requests
+
+    base_url = getattr(config, "MINERU_API_BASE", "").rstrip("/")
+    if not base_url:
+        return None
+
+    path = Path(file_path)
+    headers = _mineru_headers()
+    timeout = int(getattr(config, "MINERU_TIMEOUT", 300))
+
+    create_resp = requests.post(
+        f"{base_url}/parse/file",
+        json=_mineru_create_payload(path),
+        headers=headers,
+        timeout=timeout,
+    )
+    create_resp.raise_for_status()
+    create_data = _mineru_data(create_resp.json())
+    task_id = create_data.get("task_id") or create_data.get("taskId") or create_data.get("id")
+    upload_url = (
+        create_data.get("upload_url")
+        or create_data.get("uploadUrl")
+        or create_data.get("file_url")
+        or create_data.get("fileUrl")
+    )
+    if not task_id or not upload_url:
+        return None
+
+    with open(file_path, "rb") as pdf:
+        upload_resp = requests.put(upload_url, data=pdf, timeout=timeout)
+    upload_resp.raise_for_status()
+
+    result = _wait_for_mineru_result(base_url, task_id, headers)
+    return _download_mineru_markdown(result, headers)
+
+
+def _mineru_create_payload(path: Path) -> Dict[str, object]:
+    return {
+        "filename": path.name,
+        "file_name": path.name,
+        "language": getattr(config, "MINERU_LANGUAGE", "ch"),
+        "enable_table": bool(getattr(config, "MINERU_ENABLE_TABLE", True)),
+        "enable_formula": bool(getattr(config, "MINERU_ENABLE_FORMULA", True)),
+        "is_ocr": bool(getattr(config, "MINERU_IS_OCR", False)),
+    }
+
+
+def _mineru_headers() -> Dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    token = getattr(config, "MINERU_API_TOKEN", "")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _wait_for_mineru_result(base_url: str, task_id: str, headers: Dict[str, str]) -> Dict[str, object]:
+    import requests
+
+    timeout = int(getattr(config, "MINERU_TIMEOUT", 300))
+    interval = max(1, int(getattr(config, "MINERU_POLL_INTERVAL", 3)))
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        resp = requests.get(f"{base_url}/parse/{task_id}", headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        data = _mineru_data(resp.json())
+        status = str(data.get("status") or data.get("state") or "").lower()
+        if status in {"done", "finished", "success", "succeeded", "completed"}:
+            return data
+        if status in {"failed", "fail", "error"}:
+            return {}
+        time.sleep(interval)
+
+    return {}
+
+
+def _download_mineru_markdown(result: Dict[str, object], headers: Dict[str, str]) -> Optional[str]:
+    import requests
+
+    markdown = result.get("markdown") or result.get("md") or result.get("content")
+    if isinstance(markdown, str) and markdown.strip():
+        return markdown
+
+    md_url = (
+        result.get("markdown_url")
+        or result.get("markdownUrl")
+        or result.get("md_url")
+        or result.get("mdUrl")
+    )
+    if not md_url:
+        return None
+
+    resp = requests.get(md_url, headers=headers, timeout=int(getattr(config, "MINERU_TIMEOUT", 300)))
+    resp.raise_for_status()
+    return resp.text
+
+
+def _mineru_data(payload: Dict[str, object]) -> Dict[str, object]:
+    data = payload.get("data", payload) if isinstance(payload, dict) else {}
+    return data if isinstance(data, dict) else {}
 
 
 def parse_pptx(file_path: str) -> str:

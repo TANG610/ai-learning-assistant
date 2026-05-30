@@ -28,7 +28,13 @@ BAIDU_ASR_CUID = os.getenv("BAIDU_ASR_CUID", "ai-learning-assistant").strip()
 BAIDU_ASR_DEV_PID = int(os.getenv("BAIDU_ASR_DEV_PID", "1537"))
 BAIDU_ASR_CHUNK_SECONDS = int(os.getenv("BAIDU_ASR_CHUNK_SECONDS", "55"))
 BAIDU_ASR_TIMEOUT = int(os.getenv("BAIDU_ASR_TIMEOUT", "30"))
-BAIDU_ASR_FALLBACK_TO_WHISPER = os.getenv("BAIDU_ASR_FALLBACK_TO_WHISPER", "true").lower() in (
+LOCAL_WHISPER_ASR_ENABLED = os.getenv("LOCAL_WHISPER_ASR_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+BAIDU_ASR_FALLBACK_TO_WHISPER = os.getenv("BAIDU_ASR_FALLBACK_TO_WHISPER", "false").lower() in (
     "1",
     "true",
     "yes",
@@ -85,11 +91,13 @@ class TranscriptionService:
 
     @classmethod
     def _get_provider(cls) -> str:
-        if ASR_PROVIDER in {"baidu", "whisper"}:
+        if ASR_PROVIDER == "baidu":
             return ASR_PROVIDER
+        if ASR_PROVIDER == "whisper":
+            return "whisper" if LOCAL_WHISPER_ASR_ENABLED else "disabled"
         if BAIDU_ASR_API_KEY and BAIDU_ASR_SECRET_KEY:
             return "baidu"
-        return "whisper"
+        return "disabled"
 
     @classmethod
     def transcribe(cls, video_path: str) -> dict:
@@ -110,16 +118,20 @@ class TranscriptionService:
 
         audio_path = None
         try:
+            provider = cls._get_provider()
+            if provider == "disabled":
+                log.info("[Transcription] Local Whisper ASR is disabled.")
+                return {"text": "", "segments": [], "language": ""}
+
             audio_path = cls._extract_audio(video_path)
             if not audio_path:
                 return {"text": "", "segments": [], "language": ""}
 
-            provider = cls._get_provider()
             if provider == "baidu":
                 try:
                     result = cls._run_baidu(audio_path)
                 except Exception as e:
-                    if not BAIDU_ASR_FALLBACK_TO_WHISPER:
+                    if not BAIDU_ASR_FALLBACK_TO_WHISPER or not LOCAL_WHISPER_ASR_ENABLED:
                         raise
                     log.warning(f"[Transcription] Baidu ASR failed, falling back to whisper: {e}")
                     result = cls._run_whisper(audio_path)
