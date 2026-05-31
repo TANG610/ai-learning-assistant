@@ -16,11 +16,13 @@ def test_hybrid_retriever_adapter_converts_results_to_documents(monkeypatch):
     from services.rag_chain_service import HybridRetrieverAdapter
     from services.document_service import DocumentService
 
-    def fake_hybrid_search(query, doc_id=None, top_k=5, user_id=None):
+    def fake_hybrid_search(query, doc_id=None, top_k=5, user_id=None, query_variants=None, recall_per_route=None):
         assert query == "what is rag"
         assert doc_id == 12
         assert top_k == 2
         assert user_id == 7
+        assert query_variants == ["rag retrieval augmented generation"]
+        assert recall_per_route == 15
         return [
             {
                 "text": "RAG retrieves external knowledge before generation.",
@@ -31,6 +33,9 @@ def test_hybrid_retriever_adapter_converts_results_to_documents(monkeypatch):
                 "bm25_score": -1.2,
                 "retrieval_sources": ["vector", "keyword"],
                 "matched_terms": ["rag"],
+                "query_matches": [
+                    {"query": "what is rag", "query_index": 0, "source": "vector", "score": 0.88}
+                ],
                 "doc_id": 12,
                 "chunk_index": 3,
                 "title_path": "Guide > RAG",
@@ -44,7 +49,9 @@ def test_hybrid_retriever_adapter_converts_results_to_documents(monkeypatch):
         top_k=2,
         user_id=7,
         score_threshold=0.3,
+        recall_per_route=15,
         doc_name_resolver=lambda doc_id: f"doc-{doc_id}",
+        query_rewriter=lambda query: ["rag retrieval augmented generation"],
     )
     docs = adapter.search("what is rag", document_cls=FakeDocument)
 
@@ -54,8 +61,12 @@ def test_hybrid_retriever_adapter_converts_results_to_documents(monkeypatch):
     assert docs[0].metadata["chunk_index"] == 3
     assert docs[0].metadata["title_path"] == "Guide > RAG"
     assert docs[0].metadata["retrieval_sources"] == ["vector", "keyword"]
+    assert docs[0].metadata["query_matches"][0]["query"] == "what is rag"
     assert adapter.last_sources[0]["doc_name"] == "doc-12"
-    assert adapter.build_debug("what is rag")["accepted_count"] == 1
+    debug = adapter.build_debug("what is rag")
+    assert debug["accepted_count"] == 1
+    assert debug["query_variants"] == ["what is rag", "rag retrieval augmented generation"]
+    assert debug["vector_recall_per_query"] == 15
 
 
 def test_hybrid_retriever_adapter_respects_context_limit(monkeypatch):
@@ -76,3 +87,28 @@ def test_hybrid_retriever_adapter_respects_context_limit(monkeypatch):
 
     assert [doc.page_content for doc in docs] == ["abcdef", "gh"]
     assert adapter.last_sources[1]["reason"] == "truncated_to_context_limit"
+
+
+def test_hybrid_retriever_adapter_keeps_original_query_when_rewrite_fails(monkeypatch):
+    from services.rag_chain_service import HybridRetrieverAdapter
+    from services.document_service import DocumentService
+
+    seen = {}
+
+    def fake_hybrid_search(query, doc_id=None, top_k=5, user_id=None, query_variants=None, recall_per_route=None):
+        seen["query_variants"] = query_variants
+        return [{"text": "answer", "score": 0.9, "doc_id": 1, "chunk_index": 0}]
+
+    monkeypatch.setattr(DocumentService, "hybrid_search_documents", staticmethod(fake_hybrid_search))
+
+    adapter = HybridRetrieverAdapter(
+        score_threshold=0.3,
+        query_rewriter=lambda query: (_ for _ in ()).throw(RuntimeError("rewrite down")),
+    )
+    docs = adapter.search("original", document_cls=FakeDocument)
+
+    assert docs[0].page_content == "answer"
+    assert seen["query_variants"] == []
+    debug = adapter.build_debug("original")
+    assert debug["query_variants"] == ["original"]
+    assert "rewrite down" in debug["rewrite_error"]

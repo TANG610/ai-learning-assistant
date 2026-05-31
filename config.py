@@ -97,6 +97,13 @@ def _env_float(name: str, default: float) -> float:
     return float(value)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name, "")
+    if value is None or str(value).strip() == "":
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 FLASK_HOST = _env_str("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = _env_int("FLASK_PORT", 5000)
 FLASK_DEBUG = os.getenv("FLASK_DEBUG", "true").lower() == "true"
@@ -152,6 +159,9 @@ RAG_ENGINE = _env_str("RAG_ENGINE", "langchain").lower()
 RAG_TOP_K = _env_int("RAG_TOP_K", 8)
 RAG_SCORE_THRESHOLD = _env_float("RAG_SCORE_THRESHOLD", 0.45)
 RAG_CONTEXT_MAX_CHARS = _env_int("RAG_CONTEXT_MAX_CHARS", 12000)
+RAG_QUERY_REWRITE_ENABLED = _env_bool("RAG_QUERY_REWRITE_ENABLED", True)
+RAG_QUERY_VARIANTS = _env_int("RAG_QUERY_VARIANTS", 3)
+RAG_RECALL_PER_ROUTE = _env_int("RAG_RECALL_PER_ROUTE", 15)
 
 # Embedding 模型：优先使用本地目录（离线），其次在线下载
 _LOCAL_MINI_LM = BASE_DIR / "embedding_model" / "all-MiniLM-L6-v2"

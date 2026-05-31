@@ -345,7 +345,14 @@ class DocumentService:
         return DocumentService.hybrid_search_documents(query, doc_id, top_k, user_id=user_id)
 
     @staticmethod
-    def hybrid_search_documents(query: str, doc_id: int = None, top_k: int = 5, user_id: int = None) -> list:
+    def hybrid_search_documents(
+        query: str,
+        doc_id: int = None,
+        top_k: int = 5,
+        user_id: int = None,
+        query_variants: List[str] = None,
+        recall_per_route: int = None,
+    ) -> list:
         """Dual-route retrieval over document chunks.
 
         Vector recall handles semantic paraphrases. Keyword recall handles exact
@@ -354,11 +361,53 @@ class DocumentService:
         downloading an extra reranker model.
         """
         top_k = max(1, int(top_k or 5))
-        vector_results = DocumentService._safe_vector_search(query, doc_id, max(top_k * 2, top_k), user_id)
-        keyword_results = DocumentService._keyword_search_documents(query, doc_id, max(top_k * 4, top_k), user_id)
+        recall_per_route = max(1, int(recall_per_route or config.RAG_RECALL_PER_ROUTE))
+        queries = DocumentService._normalize_query_variants(query, query_variants)
+        vector_results = []
+        keyword_results = []
+        for query_index, retrieval_query in enumerate(queries):
+            vector_results.extend(
+                DocumentService._tag_query_results(
+                    DocumentService._safe_vector_search(retrieval_query, doc_id, recall_per_route, user_id),
+                    retrieval_query,
+                    query_index,
+                )
+            )
+            keyword_results.extend(
+                DocumentService._tag_query_results(
+                    DocumentService._keyword_search_documents(retrieval_query, doc_id, recall_per_route, user_id),
+                    retrieval_query,
+                    query_index,
+                )
+            )
         merged = DocumentService._merge_retrieval_results(vector_results, keyword_results)
         reranked = DocumentService._rerank_results(query, merged)
         return reranked[:top_k]
+
+    @staticmethod
+    def _normalize_query_variants(query: str, query_variants: List[str] = None) -> List[str]:
+        variants = [query]
+        variants.extend(query_variants or [])
+        normalized = []
+        seen = set()
+        for item in variants:
+            value = re.sub(r"\s+", " ", str(item or "")).strip()
+            key = DocumentService._normalized_text(value)
+            if not value or key in seen:
+                continue
+            seen.add(key)
+            normalized.append(value)
+        return normalized or [query]
+
+    @staticmethod
+    def _tag_query_results(results: list, query: str, query_index: int) -> list:
+        tagged = []
+        for item in results or []:
+            copy = dict(item)
+            copy["query"] = query
+            copy["query_index"] = query_index
+            tagged.append(copy)
+        return tagged
 
     @staticmethod
     def _safe_vector_search(query: str, doc_id: int = None, top_k: int = 5, user_id: int = None) -> list:
@@ -627,20 +676,31 @@ class DocumentService:
             if not key:
                 continue
             score = float(item.get("score") or 0)
-            merged[key] = {
-                "text": item.get("text") or "",
-                "doc_id": item.get("doc_id"),
-                "chunk_index": item.get("chunk_index"),
-                "title_path": item.get("title_path") or "",
-                "distance": item.get("distance"),
-                "vector_score": score,
-                "keyword_score": 0.0,
-                "bm25_score": None,
-                "vector_rank": rank,
-                "keyword_rank": None,
-                "retrieval_sources": ["vector"],
-                "matched_terms": [],
-            }
+            existing = merged.get(key)
+            if existing:
+                existing["vector_score"] = max(existing.get("vector_score", 0.0), score)
+                existing["distance"] = DocumentService._min_optional(existing.get("distance"), item.get("distance"))
+                existing["vector_rank"] = DocumentService._min_optional(existing.get("vector_rank"), rank)
+                if "vector" not in existing["retrieval_sources"]:
+                    existing["retrieval_sources"].append("vector")
+                DocumentService._append_query_match(existing, item, "vector")
+            else:
+                merged[key] = {
+                    "text": item.get("text") or "",
+                    "doc_id": item.get("doc_id"),
+                    "chunk_index": item.get("chunk_index"),
+                    "title_path": item.get("title_path") or "",
+                    "distance": item.get("distance"),
+                    "vector_score": score,
+                    "keyword_score": 0.0,
+                    "bm25_score": None,
+                    "vector_rank": rank,
+                    "keyword_rank": None,
+                    "retrieval_sources": ["vector"],
+                    "matched_terms": [],
+                    "query_matches": [],
+                }
+                DocumentService._append_query_match(merged[key], item, "vector")
 
         for rank, item in enumerate(keyword_results or [], start=1):
             key = DocumentService._result_key(item)
@@ -651,7 +711,7 @@ class DocumentService:
             if existing:
                 existing["keyword_score"] = max(existing.get("keyword_score", 0.0), keyword_score)
                 existing["bm25_score"] = item.get("bm25_score", existing.get("bm25_score"))
-                existing["keyword_rank"] = rank
+                existing["keyword_rank"] = DocumentService._min_optional(existing.get("keyword_rank"), rank)
                 existing["matched_terms"] = item.get("matched_terms", [])
                 if "keyword" not in existing["retrieval_sources"]:
                     existing["retrieval_sources"].append("keyword")
@@ -659,6 +719,7 @@ class DocumentService:
                     existing["text"] = item.get("text") or ""
                 if not existing.get("title_path"):
                     existing["title_path"] = item.get("title_path") or ""
+                DocumentService._append_query_match(existing, item, "keyword")
             else:
                 merged[key] = {
                     "text": item.get("text") or "",
@@ -673,9 +734,33 @@ class DocumentService:
                     "keyword_rank": rank,
                     "retrieval_sources": ["keyword"],
                     "matched_terms": item.get("matched_terms", []),
+                    "query_matches": [],
                 }
+                DocumentService._append_query_match(merged[key], item, "keyword")
 
         return list(merged.values())
+
+    @staticmethod
+    def _append_query_match(target: dict, item: dict, source: str):
+        query = item.get("query")
+        if not query:
+            return
+        match = {
+            "query": query,
+            "query_index": item.get("query_index"),
+            "source": source,
+            "score": item.get("score"),
+        }
+        if match not in target.setdefault("query_matches", []):
+            target["query_matches"].append(match)
+
+    @staticmethod
+    def _min_optional(left, right):
+        if left is None:
+            return right
+        if right is None:
+            return left
+        return min(left, right)
 
     @staticmethod
     def _rerank_results(query: str, results: list) -> list:

@@ -138,3 +138,63 @@ def test_keyword_route_respects_document_scope(monkeypatch, test_db):
 
     assert results
     assert {item["doc_id"] for item in results} == {scoped_doc_id}
+
+
+def test_hybrid_search_runs_each_query_through_vector_and_keyword_recall(monkeypatch):
+    from backend.services.document_service import DocumentService
+
+    vector_calls = []
+    keyword_calls = []
+
+    def fake_vector_search(query, doc_id=None, top_k=5, user_id=None):
+        vector_calls.append((query, top_k))
+        return [
+            {
+                "text": f"{query} vector chunk",
+                "score": 0.7,
+                "distance": 0.3,
+                "doc_id": 1,
+                "chunk_index": 0,
+            }
+        ]
+
+    def fake_keyword_search(query, doc_id=None, top_k=20, user_id=None):
+        keyword_calls.append((query, top_k))
+        return [
+            {
+                "text": f"{query} keyword chunk",
+                "score": 0.6,
+                "keyword_score": 0.6,
+                "doc_id": 1,
+                "chunk_index": 0,
+            },
+            {
+                "text": f"{query} second keyword chunk",
+                "score": 0.55,
+                "keyword_score": 0.55,
+                "doc_id": 1,
+                "chunk_index": len(keyword_calls),
+            },
+        ]
+
+    monkeypatch.setattr(DocumentService, "_safe_vector_search", staticmethod(fake_vector_search))
+    monkeypatch.setattr(DocumentService, "_keyword_search_documents", staticmethod(fake_keyword_search))
+
+    results = DocumentService.hybrid_search_documents(
+        "original query",
+        top_k=8,
+        query_variants=["rewrite one", "rewrite two"],
+        recall_per_route=15,
+    )
+
+    assert vector_calls == [("original query", 15), ("rewrite one", 15), ("rewrite two", 15)]
+    assert keyword_calls == [("original query", 15), ("rewrite one", 15), ("rewrite two", 15)]
+    assert len(results) <= 8
+    assert len({(item["doc_id"], item["chunk_index"]) for item in results}) == len(results)
+    first = results[0]
+    assert set(first["retrieval_sources"]) == {"vector", "keyword"}
+    assert {match["query"] for match in first["query_matches"]} == {
+        "original query",
+        "rewrite one",
+        "rewrite two",
+    }

@@ -4,6 +4,7 @@ LLM 服务 - 多 Provider 架构
 """
 from openai import OpenAI
 import json
+import re
 import time
 import config
 from models.database import ConversationDAO
@@ -196,6 +197,55 @@ class LLMService:
             except Exception as e:
                 raise RuntimeError(f"LLM API 错误: {str(e)}")
         raise RuntimeError(f"LLM API 连接失败（已重试{retries}次）: {last_err}")
+
+    def rewrite_retrieval_queries(self, user_message: str, history: list = None, max_queries: int = 3) -> list:
+        target_count = max(0, int(max_queries or 3) - 1)
+        if target_count <= 0 or not (user_message or "").strip():
+            return []
+
+        history_text = "\n".join(
+            f"{item.get('role', 'unknown')}: {item.get('content', '')}"
+            for item in (history or [])[-6:]
+            if item.get("content")
+        )
+        prompt = (
+            "Rewrite the user question into concise retrieval search queries.\n"
+            "Return only JSON: {\"queries\": [\"...\"]}.\n"
+            f"Return {target_count} queries. Keep the user's language. "
+            "Prefer concrete nouns, titles, task names, synonyms, and likely document wording. "
+            "Do not answer the question.\n\n"
+            f"Recent chat history:\n{history_text or '(none)'}\n\n"
+            f"User question:\n{user_message}"
+        )
+        raw = self._call(
+            [
+                {"role": "system", "content": "You create search queries for a RAG retriever."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=300,
+            retries=1,
+        )
+        data = json.loads(self._clean_json(raw))
+        queries = data.get("queries") if isinstance(data, dict) else data
+        if not isinstance(queries, list):
+            return []
+
+        normalized = []
+        seen = {self._normalize_query(user_message)}
+        for item in queries:
+            query = re.sub(r"\s+", " ", str(item or "")).strip()
+            key = self._normalize_query(query)
+            if not query or key in seen:
+                continue
+            seen.add(key)
+            normalized.append(query)
+            if len(normalized) >= target_count:
+                break
+        return normalized
+
+    @staticmethod
+    def _normalize_query(query: str) -> str:
+        return re.sub(r"\s+", " ", (query or "").lower()).strip()
 
     def chat(self, conversation_id: int, user_message: str, context_chunks: list = None, user_id: int = None) -> str:
         """

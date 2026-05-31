@@ -6,6 +6,7 @@ scoping, reranking, and source metadata still come from the existing services.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional
 
@@ -36,18 +37,26 @@ class HybridRetrieverAdapter:
     user_id: Optional[int] = None
     score_threshold: float = field(default_factory=lambda: config.RAG_SCORE_THRESHOLD)
     context_max_chars: int = field(default_factory=lambda: config.RAG_CONTEXT_MAX_CHARS)
+    recall_per_route: int = field(default_factory=lambda: config.RAG_RECALL_PER_ROUTE)
     doc_name_resolver: Callable[[Any], str] = get_doc_name
+    query_rewriter: Optional[Callable[[str], list[str]]] = None
 
     last_raw_results: list[dict[str, Any]] = field(default_factory=list, init=False)
     last_sources: list[dict[str, Any]] = field(default_factory=list, init=False)
     last_debug: dict[str, Any] = field(default_factory=dict, init=False)
+    last_query_variants: list[str] = field(default_factory=list, init=False)
+    last_rewrite_latency_ms: int = field(default=0, init=False)
+    last_rewrite_error: Optional[str] = field(default=None, init=False)
 
     def search(self, query: str, document_cls=None) -> list[Any]:
+        query_variants = self._build_query_variants(query)
         raw_results = DocumentService.hybrid_search_documents(
             query,
             self.document_id,
             top_k=self.top_k,
             user_id=self.user_id,
+            query_variants=query_variants[1:],
+            recall_per_route=self.recall_per_route,
         )
         self.last_raw_results = raw_results
         self.last_sources = []
@@ -84,6 +93,23 @@ class HybridRetrieverAdapter:
         self.last_debug = self.build_debug(query)
         return docs
 
+    def _build_query_variants(self, query: str) -> list[str]:
+        self.last_rewrite_latency_ms = 0
+        self.last_rewrite_error = None
+        rewrites = []
+        if self.query_rewriter:
+            started = time.perf_counter()
+            try:
+                rewrites = self.query_rewriter(query) or []
+            except Exception as exc:
+                self.last_rewrite_error = str(exc)
+            finally:
+                self.last_rewrite_latency_ms = int((time.perf_counter() - started) * 1000)
+
+        variants = DocumentService._normalize_query_variants(query, rewrites)
+        self.last_query_variants = variants[:max(1, int(config.RAG_QUERY_VARIANTS or 3))]
+        return self.last_query_variants
+
     def as_langchain_retriever(self):
         modules = load_langchain_modules()
         Document = modules["Document"]
@@ -106,13 +132,22 @@ class HybridRetrieverAdapter:
             "top_k": self.top_k,
             "score_threshold": self.score_threshold,
             "context_max_chars": self.context_max_chars,
+            "recall_per_route": self.recall_per_route,
+            "vector_recall_per_query": self.recall_per_route,
+            "keyword_recall_per_query": self.recall_per_route,
             "rag_engine": "langchain",
+            "query_rewrite_enabled": bool(self.query_rewriter),
+            "query_variants": self.last_query_variants or [query],
+            "query_variant_count": len(self.last_query_variants or [query]),
+            "rewrite_latency_ms": self.last_rewrite_latency_ms,
             "results": [
                 self._source_from_result(rank, item)
                 for rank, item in enumerate(self.last_raw_results, start=1)
             ],
             "accepted_count": len(self.last_sources),
         }
+        if self.last_rewrite_error:
+            debug["rewrite_error"] = self.last_rewrite_error
         if fallback_reason:
             debug["fallback_reason"] = fallback_reason
         return debug
@@ -134,6 +169,7 @@ class HybridRetrieverAdapter:
             "bm25_score": item.get("bm25_score"),
             "retrieval_sources": item.get("retrieval_sources", []),
             "matched_terms": item.get("matched_terms", []),
+            "query_matches": item.get("query_matches", []),
             "distance": item.get("distance"),
             "accepted": accepted,
             "reason": "sent_to_llm" if accepted else "below_threshold",
@@ -156,6 +192,7 @@ class HybridRetrieverAdapter:
             "bm25_score": source.get("bm25_score"),
             "retrieval_sources": source.get("retrieval_sources", []),
             "matched_terms": source.get("matched_terms", []),
+            "query_matches": source.get("query_matches", []),
             "distance": source.get("distance"),
         }
 
@@ -168,7 +205,7 @@ class RagChainService:
 
     def answer(self, conversation_id: int, user_message: str, document_id: int = None, user_id: int = None) -> dict[str, Any]:
         modules = load_langchain_modules()
-        chain, retriever = self._build_chain(modules, document_id, user_id)
+        chain, retriever = self._build_chain(modules, conversation_id, document_id, user_id)
         result = chain.invoke({
             "input": user_message,
             "chat_history": self._history_messages(modules, conversation_id),
@@ -191,7 +228,7 @@ class RagChainService:
 
     def answer_stream(self, conversation_id: int, user_message: str, document_id: int = None, user_id: int = None) -> Iterable[dict[str, Any]]:
         modules = load_langchain_modules()
-        chain, retriever = self._build_chain(modules, document_id, user_id)
+        chain, retriever = self._build_chain(modules, conversation_id, document_id, user_id)
         full_reply = ""
         for chunk in chain.stream({
             "input": user_message,
@@ -216,13 +253,19 @@ class RagChainService:
             "retrieval_debug": retriever.build_debug(user_message),
         }
 
-    def _build_chain(self, modules: dict[str, Any], document_id: int = None, user_id: int = None):
+    def _build_chain(self, modules: dict[str, Any], conversation_id: int, document_id: int = None, user_id: int = None):
         retriever = HybridRetrieverAdapter(
             document_id=document_id,
             top_k=config.RAG_TOP_K,
             user_id=user_id,
             score_threshold=config.RAG_SCORE_THRESHOLD,
             context_max_chars=config.RAG_CONTEXT_MAX_CHARS,
+            recall_per_route=config.RAG_RECALL_PER_ROUTE,
+            query_rewriter=(
+                (lambda query: self._rewrite_retrieval_queries(conversation_id, query))
+                if config.RAG_QUERY_REWRITE_ENABLED
+                else None
+            ),
         )
         prompt = modules["ChatPromptTemplate"].from_messages([
             ("system", self._system_prompt()),
@@ -232,6 +275,16 @@ class RagChainService:
         qa_chain = modules["create_stuff_documents_chain"](self._chat_model(modules), prompt)
         chain = modules["create_retrieval_chain"](retriever.as_langchain_retriever(), qa_chain)
         return chain, retriever
+
+    def _rewrite_retrieval_queries(self, conversation_id: int, user_message: str) -> list[str]:
+        if not config.RAG_QUERY_REWRITE_ENABLED:
+            return []
+        history = ConversationDAO.get_messages(conversation_id)
+        return self.llm_service.rewrite_retrieval_queries(
+            user_message,
+            history=history,
+            max_queries=config.RAG_QUERY_VARIANTS,
+        )
 
     def _chat_model(self, modules: dict[str, Any]):
         provider = resolve_current_provider()
