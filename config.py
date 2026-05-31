@@ -150,7 +150,7 @@ CHUNK_SIZE = _env_int("CHUNK_SIZE", 500)
 CHUNK_OVERLAP = _env_int("CHUNK_OVERLAP", 50)
 RAG_ENGINE = _env_str("RAG_ENGINE", "langchain").lower()
 RAG_TOP_K = _env_int("RAG_TOP_K", 8)
-RAG_SCORE_THRESHOLD = _env_float("RAG_SCORE_THRESHOLD", 0.3)
+RAG_SCORE_THRESHOLD = _env_float("RAG_SCORE_THRESHOLD", 0.45)
 RAG_CONTEXT_MAX_CHARS = _env_int("RAG_CONTEXT_MAX_CHARS", 12000)
 
 # Embedding 模型：优先使用本地目录（离线），其次在线下载
