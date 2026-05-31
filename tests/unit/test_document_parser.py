@@ -83,7 +83,7 @@ def test_parse_pdf_document_falls_back_to_pymupdf(monkeypatch, tmp_path):
     assert file_type == "pdf"
 
 
-def test_chunk_markdown_by_headings_preserves_title_path():
+def test_chunk_markdown_by_headings_returns_title_path_metadata():
     from backend.services.document_parser import chunk_markdown_by_headings
 
     markdown = """# Agent Evaluation
@@ -102,10 +102,12 @@ Measure unsupported claims.
     chunks = chunk_markdown_by_headings(markdown, chunk_size=500, overlap=50)
 
     assert len(chunks) == 3
-    assert chunks[0].startswith("[Title Path] Agent Evaluation")
-    assert "[Title Path] Agent Evaluation > Tool Accuracy" in chunks[1]
-    assert "correct tool and arguments" in chunks[1]
-    assert "[Title Path] Agent Evaluation > Hallucination Rate" in chunks[2]
+    assert chunks[0]["title_path"] == "Agent Evaluation"
+    assert chunks[0]["content"] == "Intro text."
+    assert chunks[1]["title_path"] == "Agent Evaluation > Tool Accuracy"
+    assert "correct tool and arguments" in chunks[1]["content"]
+    assert "[Title Path]" not in chunks[1]["content"]
+    assert chunks[2]["title_path"] == "Agent Evaluation > Hallucination Rate"
 
 
 def test_chunk_markdown_by_headings_ignores_headings_inside_code_fences():
@@ -123,8 +125,8 @@ Body after code.
     chunks = chunk_markdown_by_headings(markdown, chunk_size=500, overlap=50)
 
     assert len(chunks) == 1
-    assert "[Title Path] Real Heading" in chunks[0]
-    assert "# Not A Heading" in chunks[0]
+    assert chunks[0]["title_path"] == "Real Heading"
+    assert "# Not A Heading" in chunks[0]["content"]
 
 
 def test_chunk_markdown_by_headings_falls_back_without_headings():
@@ -134,7 +136,7 @@ def test_chunk_markdown_by_headings_falls_back_without_headings():
 
     chunks = chunk_markdown_by_headings(markdown, chunk_size=500, overlap=50)
 
-    assert chunks == ["first paragraph\n\nsecond paragraph"]
+    assert chunks == [{"content": "first paragraph\n\nsecond paragraph", "title_path": ""}]
 
 
 def test_chunk_markdown_by_headings_splits_long_section_with_repeated_path():
@@ -146,4 +148,5 @@ def test_chunk_markdown_by_headings_splits_long_section_with_repeated_path():
     chunks = chunk_markdown_by_headings(markdown, chunk_size=180, overlap=20)
 
     assert len(chunks) > 1
-    assert all(chunk.startswith("[Title Path] Agent Evaluation") for chunk in chunks)
+    assert all(chunk["title_path"] == "Agent Evaluation" for chunk in chunks)
+    assert all("[Title Path]" not in chunk["content"] for chunk in chunks)

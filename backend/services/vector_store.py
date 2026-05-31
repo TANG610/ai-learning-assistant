@@ -91,10 +91,16 @@ class VectorStore:
             metadata={"hnsw:space": "cosine"},
         )
 
-    def add_chunks(self, doc_id: int, chunks: List[str], user_id: int = None) -> List[str]:
+    def add_chunks(
+        self,
+        doc_id: int,
+        chunks: List[str],
+        user_id: int = None,
+        chunk_metadata: List[dict] = None,
+    ) -> List[str]:
         """Add document chunks to the user's unified knowledge collection."""
         if self._pgvector:
-            ids = self._pgvector.add_chunks(doc_id, chunks, user_id=user_id)
+            ids = self._pgvector.add_chunks(doc_id, chunks, user_id=user_id, chunk_metadata=chunk_metadata)
             self.last_embeddings = self._pgvector.last_embeddings
             return ids
 
@@ -106,11 +112,13 @@ class VectorStore:
 
         embeddings = self._get_embedding_function()(chunks).tolist()
         ids = [f"doc_{doc_id}_chunk_{i}" for i in range(len(chunks))]
+        chunk_metadata = chunk_metadata or [{} for _ in chunks]
         metadatas = [
             {
                 "doc_id": int(doc_id),
                 "chunk_index": i,
                 "user_id": int(user_id) if user_id is not None else 0,
+                "title_path": (chunk_metadata[i].get("title_path") if i < len(chunk_metadata) else "") or "",
             }
             for i in range(len(chunks))
         ]
@@ -207,6 +215,7 @@ class VectorStore:
                     "distance": round(dist, 4),
                     "doc_id": meta.get("doc_id"),
                     "chunk_index": meta.get("chunk_index"),
+                    "title_path": meta.get("title_path") or "",
                 }
             )
         return enriched
@@ -218,7 +227,13 @@ class PgVectorStore:
     def __init__(self):
         self.last_embeddings = []
 
-    def add_chunks(self, doc_id: int, chunks: List[str], user_id: int = None) -> List[str]:
+    def add_chunks(
+        self,
+        doc_id: int,
+        chunks: List[str],
+        user_id: int = None,
+        chunk_metadata: List[dict] = None,
+    ) -> List[str]:
         self.last_embeddings = self._embed(chunks)
         return [f"doc_{doc_id}_chunk_{i}" for i in range(len(chunks))]
 
@@ -237,7 +252,7 @@ class PgVectorStore:
             params.append(int(user_id))
 
         sql = (
-            "SELECT document_id, chunk_index, content, "
+            "SELECT document_id, chunk_index, content, title_path, "
             "embedding <=> ?::vector AS distance "
             "FROM document_chunks "
             "WHERE " + " AND ".join(where) + " "
@@ -266,6 +281,7 @@ class PgVectorStore:
                 "distance": round(distance, 4),
                 "doc_id": row["document_id"],
                 "chunk_index": row["chunk_index"],
+                "title_path": row["title_path"] or "",
             })
         return results
 

@@ -287,8 +287,8 @@ def chunk_text(text: str, chunk_size: int = None, overlap: int = None) -> List[s
     return chunks
 
 
-def chunk_markdown_by_headings(text: str, chunk_size: int = None, overlap: int = None) -> List[str]:
-    """Split Markdown by heading sections, falling back to chunk_text when needed."""
+def chunk_markdown_by_headings(text: str, chunk_size: int = None, overlap: int = None) -> List[Dict[str, str]]:
+    """Split Markdown by heading sections and keep heading paths as metadata."""
     chunk_size = chunk_size or config.CHUNK_SIZE
     overlap = overlap or config.CHUNK_OVERLAP
 
@@ -297,12 +297,15 @@ def chunk_markdown_by_headings(text: str, chunk_size: int = None, overlap: int =
 
     sections = _split_markdown_sections(text)
     if not sections:
-        return chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+        return [
+            {"content": chunk, "title_path": ""}
+            for chunk in chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+        ]
 
     chunks = []
     for section in sections:
         chunks.extend(_chunk_markdown_section(section, chunk_size, overlap))
-    return [chunk for chunk in chunks if chunk.strip()]
+    return [chunk for chunk in chunks if chunk.get("content", "").strip()]
 
 
 def _split_markdown_sections(text: str) -> List[Dict[str, str]]:
@@ -335,12 +338,12 @@ def _split_markdown_sections(text: str) -> List[Dict[str, str]]:
             heading_stack.append(title)
             current = {
                 "path": " > ".join([h for h in heading_stack if h]),
-                "text": line,
+                "text": "",
             }
             continue
 
         if current:
-            current["text"] += "\n" + line
+            current["text"] = current["text"] + "\n" + line if current["text"] else line
         else:
             preamble.append(line)
 
@@ -355,18 +358,18 @@ def _split_markdown_sections(text: str) -> List[Dict[str, str]]:
     return sections if any(section["path"] != "Preamble" for section in sections) else []
 
 
-def _chunk_markdown_section(section: Dict[str, str], chunk_size: int, overlap: int) -> List[str]:
+def _chunk_markdown_section(section: Dict[str, str], chunk_size: int, overlap: int) -> List[Dict[str, str]]:
     path = section.get("path") or "Untitled"
     section_text = (section.get("text") or "").strip()
-    prefix = f"[Title Path] {path}\n\n"
-    full_text = f"{prefix}{section_text}".strip()
 
-    if len(full_text) <= chunk_size:
-        return [full_text]
+    if not section_text:
+        return []
 
-    effective_size = max(120, chunk_size - len(prefix))
-    section_chunks = chunk_text(section_text, chunk_size=effective_size, overlap=overlap)
-    return [f"{prefix}{chunk}".strip() for chunk in section_chunks]
+    if len(section_text) <= chunk_size:
+        return [{"content": section_text, "title_path": path}]
+
+    section_chunks = chunk_text(section_text, chunk_size=chunk_size, overlap=overlap)
+    return [{"content": chunk, "title_path": path} for chunk in section_chunks]
 
 
 def _clean_markdown_heading(title: str) -> str:

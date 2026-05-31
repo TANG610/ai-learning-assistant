@@ -143,9 +143,10 @@ class DocumentService:
             if progress_callback:
                 progress_callback("正在切分文本块...", 50)
             if file_type in ("md", "markdown"):
-                chunks = chunk_markdown_by_headings(text)
+                chunk_items = chunk_markdown_by_headings(text)
             else:
-                chunks = chunk_text(text)
+                chunk_items = chunk_text(text)
+            chunks, chunk_metadata = DocumentService._normalize_chunk_items(chunk_items)
             if not chunks:
                 DocumentDAO.update_status(doc_id, "error")
                 return {"error": "分块结果为空"}
@@ -163,7 +164,12 @@ class DocumentService:
             if config.VECTOR_INDEX_ENABLED:
                 vector_store = VectorStore()
                 vector_store.delete_document(doc_id, user_id=user_id)
-                vector_ids = vector_store.add_chunks(doc_id, chunks, user_id=user_id)
+                vector_ids = vector_store.add_chunks(
+                    doc_id,
+                    chunks,
+                    user_id=user_id,
+                    chunk_metadata=chunk_metadata,
+                )
                 embedding_values = getattr(vector_store, "last_embeddings", []) or []
             else:
                 vector_ids = []
@@ -178,10 +184,10 @@ class DocumentService:
                 if config.VECTOR_BACKEND == "pgvector" and embedding:
                     conn.execute(
                         "INSERT INTO document_chunks "
-                        "(document_id, chunk_index, content, vector_id, embedding, embedding_model, user_id) "
-                        "VALUES (?, ?, ?, ?, ?::vector, ?, ?)",
+                        "(document_id, chunk_index, content, title_path, vector_id, embedding, embedding_model, user_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?::vector, ?, ?)",
                         (
-                            doc_id, i, chunk, vid,
+                            doc_id, i, chunk, chunk_metadata[i].get("title_path", ""), vid,
                             DocumentService._vector_literal(embedding),
                             config.EMBEDDING_API_MODEL,
                             user_id,
@@ -189,9 +195,9 @@ class DocumentService:
                     )
                 else:
                     conn.execute(
-                        "INSERT INTO document_chunks (document_id, chunk_index, content, vector_id, user_id) "
-                        "VALUES (?, ?, ?, ?, ?)",
-                        (doc_id, i, chunk, vid, user_id)
+                        "INSERT INTO document_chunks (document_id, chunk_index, content, title_path, vector_id, user_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (doc_id, i, chunk, chunk_metadata[i].get("title_path", ""), vid, user_id)
                     )
             DocumentService._replace_keyword_index_for_document(conn, doc_id)
             conn.execute(
@@ -222,6 +228,23 @@ class DocumentService:
             log.error(f"Document parse failed doc_id={doc_id}: {e}", exc_info=True)
             DocumentDAO.update_status(doc_id, "error")
             return {"error": str(e)}
+
+    @staticmethod
+    def _normalize_chunk_items(chunk_items: list) -> Tuple[List[str], List[Dict[str, str]]]:
+        chunks = []
+        metadata = []
+        for item in chunk_items or []:
+            if isinstance(item, dict):
+                content = (item.get("content") or "").strip()
+                title_path = (item.get("title_path") or "").strip()
+            else:
+                content = str(item or "").strip()
+                title_path = ""
+            if not content:
+                continue
+            chunks.append(content)
+            metadata.append({"title_path": title_path})
+        return chunks, metadata
 
     @staticmethod
     def _parse_multimodal(file_path: str, progress_callback=None) -> tuple:
@@ -393,15 +416,18 @@ class DocumentService:
             where_clauses = ["document_chunks_fts MATCH ?"]
             params = [match_query]
             if doc_id:
-                where_clauses.append("document_id = ?")
+                where_clauses.append("document_chunks_fts.document_id = ?")
                 params.append(int(doc_id))
             if user_id is not None:
-                where_clauses.append("user_id = ?")
+                where_clauses.append("document_chunks_fts.user_id = ?")
                 params.append(int(user_id))
 
             sql = (
-                "SELECT rowid, document_id, chunk_index, content, bm25(document_chunks_fts) AS bm25_score "
+                "SELECT document_chunks_fts.rowid, document_chunks_fts.document_id, "
+                "document_chunks_fts.chunk_index, document_chunks_fts.content, "
+                "document_chunks.title_path, bm25(document_chunks_fts) AS bm25_score "
                 "FROM document_chunks_fts "
+                "JOIN document_chunks ON document_chunks.id = document_chunks_fts.rowid "
                 "WHERE " + " AND ".join(where_clauses) + " "
                 "ORDER BY bm25_score ASC "
                 "LIMIT ?"
@@ -431,6 +457,7 @@ class DocumentService:
                 "matched_terms": matched_terms[:12],
                 "doc_id": row["document_id"],
                 "chunk_index": row["chunk_index"],
+                "title_path": row["title_path"] or "",
             })
 
         scored.sort(key=lambda item: (item["keyword_score"], -item["bm25_score"]), reverse=True)
@@ -465,7 +492,7 @@ class DocumentService:
 
         where_sql = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
         sql = (
-            "SELECT document_id, chunk_index, content "
+            "SELECT document_id, chunk_index, content, title_path "
             "FROM document_chunks"
             f"{where_sql} "
             "ORDER BY created_at DESC "
@@ -494,6 +521,7 @@ class DocumentService:
                 "matched_terms": matched_terms[:12],
                 "doc_id": row["document_id"],
                 "chunk_index": row["chunk_index"],
+                "title_path": row["title_path"] or "",
             })
 
         scored.sort(key=lambda item: item["keyword_score"], reverse=True)
@@ -530,7 +558,7 @@ class DocumentService:
     def _rebuild_keyword_index(conn):
         conn.execute("DELETE FROM document_chunks_fts")
         rows = conn.execute(
-            "SELECT id, document_id, chunk_index, content, user_id FROM document_chunks"
+            "SELECT id, document_id, chunk_index, content, title_path, user_id FROM document_chunks"
         ).fetchall()
         for row in rows:
             DocumentService._insert_keyword_index_row(conn, row)
@@ -542,7 +570,7 @@ class DocumentService:
             return
         DocumentService._delete_keyword_index_for_document(conn, doc_id)
         rows = conn.execute(
-            "SELECT id, document_id, chunk_index, content, user_id "
+            "SELECT id, document_id, chunk_index, content, title_path, user_id "
             "FROM document_chunks WHERE document_id = ?",
             (int(doc_id),),
         ).fetchall()
@@ -560,13 +588,14 @@ class DocumentService:
     @staticmethod
     def _insert_keyword_index_row(conn, row):
         content = row["content"] or ""
+        title_path = row["title_path"] or ""
         conn.execute(
             "INSERT OR REPLACE INTO document_chunks_fts "
             "(rowid, token_text, content, document_id, chunk_index, user_id) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 row["id"],
-                DocumentService._build_fts_search_text(content),
+                DocumentService._build_fts_search_text(f"{title_path}\n{content}"),
                 content,
                 int(row["document_id"]),
                 int(row["chunk_index"]),
@@ -602,6 +631,7 @@ class DocumentService:
                 "text": item.get("text") or "",
                 "doc_id": item.get("doc_id"),
                 "chunk_index": item.get("chunk_index"),
+                "title_path": item.get("title_path") or "",
                 "distance": item.get("distance"),
                 "vector_score": score,
                 "keyword_score": 0.0,
@@ -627,11 +657,14 @@ class DocumentService:
                     existing["retrieval_sources"].append("keyword")
                 if not existing.get("text"):
                     existing["text"] = item.get("text") or ""
+                if not existing.get("title_path"):
+                    existing["title_path"] = item.get("title_path") or ""
             else:
                 merged[key] = {
                     "text": item.get("text") or "",
                     "doc_id": item.get("doc_id"),
                     "chunk_index": item.get("chunk_index"),
+                    "title_path": item.get("title_path") or "",
                     "distance": None,
                     "vector_score": 0.0,
                     "keyword_score": keyword_score,

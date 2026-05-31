@@ -188,6 +188,7 @@ def init_db():
             document_id INTEGER NOT NULL,
             chunk_index INTEGER NOT NULL,
             content TEXT NOT NULL,
+            title_path TEXT DEFAULT '',
             vector_id TEXT,
             user_id INTEGER,
             created_at TEXT DEFAULT (datetime('now', 'localtime')),

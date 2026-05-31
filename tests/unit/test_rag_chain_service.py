@@ -33,6 +33,7 @@ def test_hybrid_retriever_adapter_converts_results_to_documents(monkeypatch):
                 "matched_terms": ["rag"],
                 "doc_id": 12,
                 "chunk_index": 3,
+                "title_path": "Guide > RAG",
             }
         ]
 
@@ -51,6 +52,7 @@ def test_hybrid_retriever_adapter_converts_results_to_documents(monkeypatch):
     assert docs[0].page_content.startswith("RAG retrieves")
     assert docs[0].metadata["doc_id"] == 12
     assert docs[0].metadata["chunk_index"] == 3
+    assert docs[0].metadata["title_path"] == "Guide > RAG"
     assert docs[0].metadata["retrieval_sources"] == ["vector", "keyword"]
     assert adapter.last_sources[0]["doc_name"] == "doc-12"
     assert adapter.build_debug("what is rag")["accepted_count"] == 1

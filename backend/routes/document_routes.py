@@ -41,7 +41,7 @@ def get_document(doc_id):
     # 查询文档分块
     conn = get_db()
     rows = conn.execute(
-        "SELECT id, chunk_index, content, length(content) as char_count FROM document_chunks WHERE document_id = ? ORDER BY chunk_index",
+        "SELECT id, chunk_index, content, title_path, length(content) as char_count FROM document_chunks WHERE document_id = ? ORDER BY chunk_index",
         (doc_id,)
     ).fetchall()
     conn.close()
@@ -51,6 +51,7 @@ def get_document(doc_id):
         chunks.append({
             "id": r["id"],
             "chunk_index": r["chunk_index"],
+            "title_path": r["title_path"] or "",
             "content": r["content"],
             "char_count": r["char_count"]
         })

@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL,
     content TEXT NOT NULL,
+    title_path TEXT DEFAULT '',
     vector_id TEXT,
     embedding vector({{EMBEDDING_DIMENSION}}),
     embedding_model TEXT,
@@ -277,3 +278,5 @@ CREATE INDEX IF NOT EXISTS idx_collector_tasks_user ON collector_tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_collector_tasks_status ON collector_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_raw_items_task ON raw_collected_items(task_id);
 CREATE INDEX IF NOT EXISTS idx_raw_items_status ON raw_collected_items(status);
+
+ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS title_path TEXT DEFAULT '';
